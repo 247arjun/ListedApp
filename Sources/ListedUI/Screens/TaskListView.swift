@@ -61,6 +61,7 @@ public struct TaskListView: View {
                     ForEach(model.visibleTasks) { task in
                         TaskRowView(task: task, showSourceBadge: showsSourceBadge)
                             .tag(task.id)
+                            .listRowBackground(rowBackground(for: task))
                             .swipeActions(edge: .leading) {
                                 Button {
                                     Task { await model.toggleCompletion(task) }
@@ -80,6 +81,7 @@ public struct TaskListView: View {
                                 rowContextMenu(for: task)
                             }
                     }
+                    .onMove(perform: handleMove)
                 }
                 #if os(macOS)
                 .listStyle(.inset)
@@ -87,6 +89,59 @@ public struct TaskListView: View {
                 .listStyle(.plain)
                 #endif
             }
+        }
+    }
+
+    /// Drag-and-drop reordering. Constrained to **same file + same priority**:
+    /// dragging a task across priority buckets or between files is silently
+    /// ignored, because the visible list is sorted/filtered and a cross-bucket
+    /// reorder wouldn't survive the next sort. The new order is persisted as the
+    /// actual line order in the underlying todo.txt file.
+    private func handleMove(from source: IndexSet, to destination: Int) {
+        guard let srcIdx = source.first, source.count == 1 else { return }
+        let visible = model.visibleTasks
+        let movingTask = visible[srcIdx]
+
+        // Translate SwiftUI's destination (post-move insertion offset) into the
+        // visible task we're landing adjacent to.
+        let anchorIdx: Int
+        if destination > srcIdx {
+            anchorIdx = destination - 1
+        } else {
+            anchorIdx = destination
+        }
+        guard anchorIdx >= 0, anchorIdx < visible.count, anchorIdx != srcIdx else { return }
+        let anchor = visible[anchorIdx]
+
+        // Constraint: only allow within the same file + same priority bucket.
+        guard movingTask.sourceFileID == anchor.sourceFileID,
+              movingTask.priority == anchor.priority else { return }
+
+        // Compute the new visible order, then extract the bucket order in that list.
+        var newVisible = visible
+        newVisible.move(fromOffsets: source, toOffset: destination)
+        let bucketIDs = newVisible
+            .filter { $0.sourceFileID == movingTask.sourceFileID && $0.priority == movingTask.priority }
+            .map { $0.id }
+
+        Task {
+            await model.reorderBucket(in: movingTask.sourceFileID, taskIDs: bucketIDs)
+        }
+    }
+
+    /// Returns a tinted background for tasks that have an explicit priority,
+    /// or `nil` to inherit the system row color. We rely on `.listRowBackground`
+    /// (the SwiftUI-native way to color a List row) so selection, hover, and
+    /// platform chrome continue to work correctly.
+    @ViewBuilder
+    private func rowBackground(for task: TodoTask) -> some View {
+        if model.workspace.settings.priorityRowHighlight,
+           let priority = task.priority,
+           !task.isCompleted {
+            DesignTokens.priorityColor(priority)
+                .opacity(0.10)
+        } else {
+            Color.clear
         }
     }
 
@@ -131,27 +186,59 @@ public struct TaskListView: View {
 
     // MARK: - Composer
 
+    /// File the inline composer should append to. When the user has a specific file
+    /// selected in the sidebar, new tasks land there; otherwise we fall back to the
+    /// workspace's default active file. Project / context / smart-list scopes don't
+    /// imply a specific file, so they keep the default.
+    private var composerTargetFileID: UUID? {
+        if case .file(let id) = model.selection,
+           let tf = model.taskFile(forTaskFileID: id),
+           tf.isEnabled, tf.role == .activeTodo {
+            return id
+        }
+        return model.defaultActiveFileID
+    }
+
     @ViewBuilder
     private var inlineComposer: some View {
-        if let defaultID = model.defaultActiveFileID {
+        if let targetID = composerTargetFileID {
             Divider()
-            HStack {
-                Image(systemName: "plus.circle.fill")
-                    .foregroundStyle(.tint)
-                TextField("Add a task… (e.g. Pay rent +Home @errands due:tomorrow)", text: $newTaskText)
-                    .textFieldStyle(.plain)
-                    .focused($newTaskFieldFocused)
-                    .onSubmit { submit(to: defaultID) }
-                if !newTaskText.isEmpty {
-                    Button("Add") { submit(to: defaultID) }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.small)
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Image(systemName: "plus.circle.fill")
+                        .foregroundStyle(.tint)
+                    TextField("Add a task\u{2026} (e.g. Pay rent +Home @errands due:tomorrow)", text: $newTaskText)
+                        .textFieldStyle(.plain)
+                        .focused($newTaskFieldFocused)
+                        .onSubmit { submit(to: targetID) }
+                    if !newTaskText.isEmpty {
+                        Button("Add") { submit(to: targetID) }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.small)
+                    }
                 }
+                composerTargetHint(for: targetID)
             }
             .padding(12)
             .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             .padding(12)
         }
+    }
+
+    /// Tiny "Adding to <file>" caption so users always know where a new task will go.
+    @ViewBuilder
+    private func composerTargetHint(for targetID: UUID) -> some View {
+        let displayName = model.displayName(forTaskFileID: targetID)
+        let isDefault = targetID == model.defaultActiveFileID
+        HStack(spacing: 4) {
+            Image(systemName: "arrow.down.right")
+            Text("Adding to ")
+            Text(displayName).fontWeight(.medium)
+            if isDefault { Text("(default)") }
+        }
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+        .padding(.leading, 24)
     }
 
     private func submit(to fileID: UUID) {
@@ -193,9 +280,8 @@ public struct TaskListView: View {
             }
 
             Button {
-                if let id = model.defaultActiveFileID {
+                if composerTargetFileID != nil {
                     newTaskFieldFocused = true
-                    _ = id
                 }
             } label: {
                 Label("New Task", systemImage: "plus")

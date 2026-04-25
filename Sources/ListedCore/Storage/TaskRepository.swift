@@ -270,6 +270,39 @@ public actor TaskRepository {
         return completed.count
     }
 
+    // MARK: - Reorder
+
+    /// Reorder a contiguous "bucket" of tasks within a file so they occupy their
+    /// existing slots in the new order given by `taskIDs`.
+    ///
+    /// - The slots a bucket occupies in the file remain the same; only which task
+    ///   sits in which slot changes. Tasks **outside** the bucket (different
+    ///   priority, blank-line spacers, etc.) are not moved.
+    /// - This is the canonical persistence path for drag-and-drop ordering: the
+    ///   file's line order *is* the truth, no `order:` metadata is involved.
+    public func reorderTasksInFile(_ fileID: UUID, taskIDs: [TodoTaskID]) async throws {
+        try await mutate(taskFileID: fileID) { file in
+            // Find each task's current line index in the file.
+            var slots: [Int] = []
+            var newOrderTasks: [TodoTask] = []
+            slots.reserveCapacity(taskIDs.count)
+            newOrderTasks.reserveCapacity(taskIDs.count)
+            for id in taskIDs {
+                guard let idx = file.tasks.firstIndex(where: { $0.id == id }) else { return }
+                slots.append(idx)
+                newOrderTasks.append(file.tasks[idx])
+            }
+            // Sort the slots ascending — these are the file positions we'll fill,
+            // in their natural top-to-bottom order, with the user's new order.
+            let ascendingSlots = slots.sorted()
+            for (index, slot) in ascendingSlots.enumerated() {
+                var t = newOrderTasks[index]
+                t.lineNumber = slot + 1
+                file.tasks[slot] = t
+            }
+        }
+    }
+
     // MARK: - Events
 
     public func events() -> AsyncStream<RepositoryEvent> {

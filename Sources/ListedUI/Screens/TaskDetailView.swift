@@ -41,8 +41,8 @@ public struct TaskDetailView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 12) {
                 CompletionToggle(
-                    isCompleted: .constant(task.isCompleted),
-                    priority: task.priority ?? task.preservedPriority,
+                    isCompleted: task.isCompleted,
+                    tint: (task.priority ?? task.preservedPriority).map(DesignTokens.priorityColor) ?? .accentColor,
                     onToggle: { Task { await model.toggleCompletion(task) } }
                 )
                 if let due = task.dueDate {
@@ -121,25 +121,87 @@ public struct TaskDetailView: View {
     }
 
     private var metadataCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Tags").font(.headline)
-            if task.projects.isEmpty && task.contexts.isEmpty {
-                Text("No projects or contexts yet.")
+        VStack(alignment: .leading, spacing: 16) {
+            tagSubsection(
+                title: "Projects",
+                icon: "number",
+                tint: .blue,
+                values: task.projects,
+                allKnown: model.allProjects,
+                tokenPrefix: "+",
+                add: { name in
+                    let updated = TaskOperations.addProject(task, name)
+                    Task { await model.update(updated) }
+                },
+                remove: { name in
+                    let updated = TaskOperations.removeProject(task, name)
+                    Task { await model.update(updated) }
+                }
+            )
+
+            Divider()
+
+            tagSubsection(
+                title: "Contexts",
+                icon: "at",
+                tint: .purple,
+                values: task.contexts,
+                allKnown: model.allContexts,
+                tokenPrefix: "@",
+                add: { name in
+                    let updated = TaskOperations.addContext(task, name)
+                    Task { await model.update(updated) }
+                },
+                remove: { name in
+                    let updated = TaskOperations.removeContext(task, name)
+                    Task { await model.update(updated) }
+                }
+            )
+        }
+        .padding(16)
+        .background(card)
+    }
+
+    /// Renders one tag-collection (projects OR contexts) with add/remove affordances.
+    @ViewBuilder
+    private func tagSubsection(
+        title: String,
+        icon: String,
+        tint: Color,
+        values: [String],
+        allKnown: [String],
+        tokenPrefix: String,
+        add: @escaping (String) -> Void,
+        remove: @escaping (String) -> Void
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Label(title, systemImage: icon)
+                    .font(.headline)
+                Spacer()
+                AddTagButton(
+                    title: "Add \(title.dropLast())",
+                    icon: icon,
+                    tint: tint,
+                    suggestions: allKnown.filter { !values.contains($0) },
+                    onAdd: add
+                )
+            }
+
+            if values.isEmpty {
+                Text("Tap \(Image(systemName: "plus.circle")) to add.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             } else {
                 FlowLayoutCompat(spacing: 6) {
-                    ForEach(task.projects, id: \.self) { project in
-                        Chip("+\(project)", style: .accent(.blue))
-                    }
-                    ForEach(task.contexts, id: \.self) { context in
-                        Chip("@\(context)", style: .accent(.purple))
+                    ForEach(values, id: \.self) { value in
+                        TagPill(text: tokenPrefix + value, tint: tint) {
+                            remove(value)
+                        }
                     }
                 }
             }
         }
-        .padding(16)
-        .background(card)
     }
 
     private var rawCard: some View {
@@ -169,7 +231,7 @@ public struct TaskDetailView: View {
     // MARK: - Commit
 
     private func sync(from task: TodoTask) {
-        description = task.displayTitle
+        description = task.cleanTitle
         dueDate = task.dueDate?.date(in: .current)
         priority = task.priority ?? task.preservedPriority
         rawLine = task.rawLine

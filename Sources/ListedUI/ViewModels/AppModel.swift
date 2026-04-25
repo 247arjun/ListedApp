@@ -206,6 +206,15 @@ public final class AppModel {
         }
     }
 
+    /// Reorder a contiguous bucket of tasks inside one file. The repository will
+    /// rewrite the file's line order so the listed task IDs occupy their slots in
+    /// the order given. Used by drag-and-drop within the same file + same priority.
+    public func reorderBucket(in fileID: UUID, taskIDs: [TodoTaskID]) async {
+        await runMutation {
+            try await self.repository.reorderTasksInFile(fileID, taskIDs: taskIDs)
+        }
+    }
+
     public func dismissError() {
         lastError = nil
     }

@@ -138,6 +138,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
     public var autoArchiveCompletedTasks: Bool
     public var showCompletedInLists: Bool
     public var showRawMetadataInRows: Bool
+    public var priorityRowHighlight: Bool
     public var deleteMode: DeleteMode
 
     public init(
@@ -147,6 +148,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         autoArchiveCompletedTasks: Bool = false,
         showCompletedInLists: Bool = false,
         showRawMetadataInRows: Bool = false,
+        priorityRowHighlight: Bool = true,
         deleteMode: DeleteMode = .ask
     ) {
         self.addCreationDateToNewTasks = addCreationDateToNewTasks
@@ -155,6 +157,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         self.autoArchiveCompletedTasks = autoArchiveCompletedTasks
         self.showCompletedInLists = showCompletedInLists
         self.showRawMetadataInRows = showRawMetadataInRows
+        self.priorityRowHighlight = priorityRowHighlight
         self.deleteMode = deleteMode
     }
 

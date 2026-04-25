@@ -7,19 +7,28 @@ struct ListedApp: App {
     @State private var model: AppModel?
 
     var body: some Scene {
-        WindowGroup {
+        #if os(macOS)
+        // Use `Window` (singular) on macOS so the `id:` becomes the autosave key
+        // for window frame + position. Combined with `.windowResizability(.contentSize)`,
+        // macOS persists the user's last size and origin in the app's preferences plist.
+        Window("Listed", id: "main") {
             ContentScene(model: model, onLoad: { await loadModel() })
         }
+        .defaultSize(width: 1100, height: 720)
+        .windowResizability(.contentSize)
         .commands { appCommands }
 
-        #if os(macOS)
         Settings {
             if let model {
                 SettingsView()
                     .environment(model)
-                    .frame(minWidth: 540, minHeight: 540)
             }
         }
+        #else
+        WindowGroup {
+            ContentScene(model: model, onLoad: { await loadModel() })
+        }
+        .commands { appCommands }
         #endif
     }
 
@@ -65,6 +74,13 @@ private struct ContentScene: View {
                     .task { await onLoad() }
             }
         }
+        // Enforce a sensible minimum content size on macOS so the three-column
+        // layout always has room for sidebar (220) + list (~420) + detail (~420)
+        // plus toolbar chrome. SwiftUI translates this into the window's
+        // `contentMinSize`, which the user-resize handles can't go below.
+        #if os(macOS)
+        .frame(minWidth: 1080, minHeight: 640)
+        #endif
     }
 }
 

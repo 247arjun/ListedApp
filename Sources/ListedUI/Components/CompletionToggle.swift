@@ -1,41 +1,31 @@
 import SwiftUI
 import ListedCore
 
-/// Animated check / circle used to toggle a task's completion.
+/// Native circular completion control built from SF Symbols.
+///
+/// Uses `circle` / `checkmark.circle.fill` rendered as a `Button` so we inherit
+/// the system's symbol rendering, accent tinting, and hover/press behavior on
+/// macOS 26 / iOS 26 instead of drawing our own ring.
 public struct CompletionToggle: View {
-    @Binding var isCompleted: Bool
-    var priority: Character?
+    var isCompleted: Bool
+    var tint: Color?
     var onToggle: () -> Void
 
-    public init(isCompleted: Binding<Bool>, priority: Character? = nil, onToggle: @escaping () -> Void) {
-        self._isCompleted = isCompleted
-        self.priority = priority
+    public init(isCompleted: Bool, tint: Color? = nil, onToggle: @escaping () -> Void) {
+        self.isCompleted = isCompleted
+        self.tint = tint
         self.onToggle = onToggle
     }
 
     public var body: some View {
         Button(action: onToggle) {
-            ZStack {
-                Circle()
-                    .stroke(borderColor, lineWidth: 1.5)
-                    .frame(width: 20, height: 20)
-                if isCompleted {
-                    Circle()
-                        .fill(Color.accentColor)
-                        .frame(width: 20, height: 20)
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(.white)
-                }
-            }
-            .contentShape(Rectangle())
+            Image(systemName: isCompleted ? "checkmark.square.fill" : "square")
+                .symbolRenderingMode(.hierarchical)
+                .font(.title3)
+                .contentTransition(.symbolEffect(.replace))
+                .foregroundStyle(tint ?? .secondary)
+                .accessibilityLabel(isCompleted ? "Mark as not done" : "Mark as done")
         }
         .buttonStyle(.plain)
-        .animation(.smooth(duration: 0.2), value: isCompleted)
-    }
-
-    private var borderColor: Color {
-        if let priority { return DesignTokens.priorityColor(priority) }
-        return .secondary
     }
 }

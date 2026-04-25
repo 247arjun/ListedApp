@@ -90,4 +90,39 @@ final class TaskRepositoryTests: XCTestCase {
             XCTFail("expected second load to detect change")
         }
     }
+
+    func testReorderTasksRewritesFileLineOrder() async throws {
+        let (workspace, tmp, resolver) = makeTempWorkspace()
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        let repo = TaskRepository(workspace: workspace, resolver: resolver)
+        let activeID = workspace.taskFiles[0].id
+        let url = tmp.appendingPathComponent("todo.txt")
+
+        // Three (B) tasks with stable UIDs interleaved with one (A) task.
+        try """
+        (A) Top priority uid:01A
+        (B) Beta one uid:01B1
+        (B) Beta two uid:01B2
+        (B) Beta three uid:01B3
+        """.write(to: url, atomically: true, encoding: .utf8)
+
+        try await repo.load(taskFileID: activeID)
+        let fileOpt = await repo.file(forTaskFileID: activeID)
+        let file = try XCTUnwrap(fileOpt)
+        let b1 = try XCTUnwrap(file.task(withUID: "01B1"))
+        let b2 = try XCTUnwrap(file.task(withUID: "01B2"))
+        let b3 = try XCTUnwrap(file.task(withUID: "01B3"))
+
+        // Reorder the (B) bucket: B3, B1, B2 (B2 stays last among B's).
+        try await repo.reorderTasksInFile(activeID, taskIDs: [b3.id, b1.id, b2.id])
+
+        let onDisk = try String(contentsOf: url, encoding: .utf8)
+        let lines = onDisk.split(separator: "\n").map(String.init)
+        // (A) row remains in slot 0; (B) slots get the new order top→bottom.
+        XCTAssertEqual(lines[0], "(A) Top priority uid:01A")
+        XCTAssertEqual(lines[1], "(B) Beta three uid:01B3")
+        XCTAssertEqual(lines[2], "(B) Beta one uid:01B1")
+        XCTAssertEqual(lines[3], "(B) Beta two uid:01B2")
+    }
 }

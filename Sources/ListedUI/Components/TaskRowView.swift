@@ -17,11 +17,11 @@ public struct TaskRowView: View {
     public var body: some View {
         HStack(alignment: .top, spacing: 12) {
             CompletionToggle(
-                isCompleted: .constant(task.isCompleted),
-                priority: task.priority ?? task.preservedPriority,
+                isCompleted: task.isCompleted,
+                tint: task.priority.map(DesignTokens.priorityColor) ?? .accentColor,
                 onToggle: { Task { await model.toggleCompletion(task) } }
             )
-            .padding(.top, 2)
+            .padding(.top, 1)
 
             VStack(alignment: .leading, spacing: 6) {
                 titleLine
@@ -66,12 +66,23 @@ public struct TaskRowView: View {
                     )
                     .foregroundStyle(DesignTokens.priorityColor(priority))
             }
-            Text(task.displayTitle.isEmpty ? "Untitled task" : task.displayTitle)
+            Text(rowTitle.isEmpty ? "Untitled task" : rowTitle)
                 .font(.body)
                 .strikethrough(task.isCompleted, color: .secondary)
                 .foregroundStyle(task.isCompleted ? .secondary : .primary)
                 .lineLimit(2)
         }
+    }
+
+    /// Honors the "Show raw metadata in rows" Appearance toggle. When off (default)
+    /// the row hides projects / contexts / metadata in the headline because the chips
+    /// row already shows them. When on, we keep the legacy behavior of stripping
+    /// only well-known structural `key:value` tokens.
+    private var rowTitle: String {
+        if model.workspace.settings.showRawMetadataInRows {
+            return task.displayTitle
+        }
+        return task.cleanTitle
     }
 
     // MARK: - Chips

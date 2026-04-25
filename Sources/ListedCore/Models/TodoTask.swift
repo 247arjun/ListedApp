@@ -113,10 +113,12 @@ public struct TodoTask: Identifiable, Hashable, Sendable {
         rawLine.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
-    /// A "title-like" string with metadata noise stripped. Useful for compact rows.
+    /// A "title-like" string with structural `key:value` tokens stripped (`due:`,
+    /// `uid:`, `pri:` etc.). Projects (`+Foo`) and contexts (`@bar`) remain inline
+    /// because some users want them in the headline; UIs that render projects /
+    /// contexts as chips below should prefer `cleanTitle`.
     public var displayTitle: String {
         var working = description
-        // Remove well-known structural metadata tokens. Keep projects/contexts (they're shown as chips, but reading them inline is helpful too).
         let stripKeys: Set<String> = ["due", "t", "rec", "uid", "parent", "pri", "order"]
         let parts = working.split(separator: " ", omittingEmptySubsequences: false)
         let kept = parts.filter { token in
@@ -126,5 +128,34 @@ public struct TodoTask: Identifiable, Hashable, Sendable {
         }
         working = kept.joined(separator: " ")
         return working.trimmingCharacters(in: .whitespaces)
+    }
+
+    /// Title with **all** structural noise removed: `key:value` metadata, `+Project`
+    /// tokens, and `@context` tokens. This is what list rows show by default — the
+    /// chips beneath the row carry the project / context information.
+    public var cleanTitle: String {
+        let parts = description.split(separator: " ", omittingEmptySubsequences: true)
+        let kept = parts.filter { token in
+            // Drop +project tokens.
+            if token.count > 1, token.first == "+" { return false }
+            // Drop @context tokens.
+            if token.count > 1, token.first == "@" { return false }
+            // Drop key:value metadata tokens (but leave URLs like https://… alone —
+            // the parser already protected them by not registering them as metadata,
+            // so we mirror that protection here).
+            if let colon = token.firstIndex(of: ":"), colon != token.startIndex {
+                let key = String(token[..<colon])
+                let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "_-"))
+                let isMetadataKey = !key.isEmpty && key.unicodeScalars.allSatisfy { allowed.contains($0) }
+                let lowered = token.lowercased()
+                let isURL = lowered.hasPrefix("http:") || lowered.hasPrefix("https:")
+                    || lowered.hasPrefix("file:") || lowered.hasPrefix("mailto:")
+                    || lowered.hasPrefix("tel:") || lowered.hasPrefix("ftp:")
+                    || lowered.hasPrefix("ssh:") || lowered.hasPrefix("git:")
+                if isMetadataKey && !isURL { return false }
+            }
+            return true
+        }
+        return kept.joined(separator: " ").trimmingCharacters(in: .whitespaces)
     }
 }

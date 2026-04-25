@@ -1,10 +1,11 @@
 import SwiftUI
 import ListedCore
-#if canImport(UIKit)
 import UniformTypeIdentifiers
+#if canImport(AppKit)
+import AppKit
 #endif
 
-/// Settings screen used as a sheet on iOS and a window on macOS.
+/// Settings screen used as a sheet on iOS and a Settings window on macOS.
 public struct SettingsView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
@@ -15,62 +16,106 @@ public struct SettingsView: View {
     public init() {}
 
     public var body: some View {
+        #if os(macOS)
+        // The Settings scene supplies the chrome; just lay the form out and size
+        // the window. .formStyle(.grouped) gives us the modern inset-card look.
+        formContent
+            .formStyle(.grouped)
+            .frame(minWidth: 600, idealWidth: 680, minHeight: 560, idealHeight: 720)
+            .scrollContentBackground(.hidden)
+        #else
         NavigationStack {
-            Form {
-                Section("Storage") {
-                    ForEach(model.workspace.fileSources) { source in
-                        sourceRow(source)
-                    }
-                    Button {
-                        showFileImporter = true
-                    } label: {
-                        Label("Add Task File…", systemImage: "doc.badge.plus")
-                    }
-                    Button {
-                        showFolderImporter = true
-                    } label: {
-                        Label("Add Folder of Files…", systemImage: "folder.badge.plus")
+            formContent
+                .formStyle(.grouped)
+                .navigationTitle("Settings")
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done") { dismiss() }
                     }
                 }
+        }
+        #endif
+    }
 
-                Section("Files") {
-                    ForEach(model.workspace.taskFiles) { file in
-                        fileRow(file)
-                    }
-                }
-
-                Section("Behavior") {
-                    Toggle("Add creation date to new tasks", isOn: bind(\.settings.addCreationDateToNewTasks))
-                    Toggle("Add UID to new tasks", isOn: bind(\.settings.addUIDToNewTasks))
-                    Toggle("Preserve priority on completion", isOn: bind(\.settings.preservePriorityOnCompletion))
-                    Toggle("Auto-archive completed tasks", isOn: bind(\.settings.autoArchiveCompletedTasks))
-                    Toggle("Show completed tasks in lists", isOn: bind(\.settings.showCompletedInLists))
-                    Toggle("Show raw metadata in rows", isOn: bind(\.settings.showRawMetadataInRows))
-                }
-            }
-            .navigationTitle("Settings")
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
-                }
-            }
-            .fileImporter(isPresented: $showFileImporter, allowedContentTypes: [.plainText], allowsMultipleSelection: false) { result in
-                handleFileImport(result)
-            }
-            .fileImporter(isPresented: $showFolderImporter, allowedContentTypes: [.folder], allowsMultipleSelection: false) { result in
-                handleFolderImport(result)
+    /// The actual form body, hoisted out so each platform can wrap it differently.
+    @ViewBuilder
+    private var formContent: some View {
+        Form {
+            storageSection
+            filesSection
+            appearanceSection
+            behaviorSection
+        }
+        // .fileImporter is unreliable inside macOS Settings scenes — see addFile()
+        // for the AppKit fallback. We still attach the modifier here so iOS keeps
+        // working through the document picker.
+        #if !os(macOS)
+        .fileImporter(isPresented: $showFileImporter, allowedContentTypes: [.plainText], allowsMultipleSelection: false) { result in
+            if case .success(let urls) = result, let url = urls.first {
+                Task { await model.addExternalFile(url) }
             }
         }
-        .frame(minWidth: 480, minHeight: 480)
+        .fileImporter(isPresented: $showFolderImporter, allowedContentTypes: [.folder], allowsMultipleSelection: false) { result in
+            if case .success(let urls) = result, let url = urls.first {
+                Task { await model.addExternalFolder(url) }
+            }
+        }
+        #endif
+    }
+
+    // MARK: - Sections
+
+    private var storageSection: some View {
+        Section("Storage") {
+            ForEach(model.workspace.fileSources) { source in
+                sourceRow(source)
+            }
+            Button {
+                addFile()
+            } label: {
+                Label("Add Task File\u{2026}", systemImage: "doc.badge.plus")
+            }
+            Button {
+                addFolder()
+            } label: {
+                Label("Add Folder of Files\u{2026}", systemImage: "folder.badge.plus")
+            }
+        }
+    }
+
+    private var filesSection: some View {
+        Section("Files") {
+            ForEach(model.workspace.taskFiles) { file in
+                fileRow(file)
+            }
+        }
+    }
+
+    private var appearanceSection: some View {
+        Section("Appearance") {
+            Toggle("Highlight rows by priority", isOn: bind(\.settings.priorityRowHighlight))
+            Toggle("Show raw metadata in rows", isOn: bind(\.settings.showRawMetadataInRows))
+        }
+    }
+
+    private var behaviorSection: some View {
+        Section("Behavior") {
+            Toggle("Add creation date to new tasks", isOn: bind(\.settings.addCreationDateToNewTasks))
+            Toggle("Add UID to new tasks", isOn: bind(\.settings.addUIDToNewTasks))
+            Toggle("Preserve priority on completion", isOn: bind(\.settings.preservePriorityOnCompletion))
+            Toggle("Auto-archive completed tasks", isOn: bind(\.settings.autoArchiveCompletedTasks))
+            Toggle("Show completed tasks in lists", isOn: bind(\.settings.showCompletedInLists))
+        }
     }
 
     // MARK: - Rows
 
     private func sourceRow(_ source: FileSource) -> some View {
-        HStack {
+        HStack(spacing: 12) {
             Image(systemName: icon(for: source.kind))
+                .foregroundStyle(.tint)
                 .frame(width: 24)
-            VStack(alignment: .leading) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(source.displayName).font(.body)
                 Text(label(for: source.kind))
                     .font(.caption)
@@ -84,13 +129,15 @@ public struct SettingsView: View {
                     .background(Capsule().fill(.tint.opacity(0.15)))
             }
         }
+        .padding(.vertical, 2)
     }
 
     private func fileRow(_ file: TaskFile) -> some View {
-        HStack {
+        HStack(spacing: 12) {
             Image(systemName: file.role == .completedArchive ? "tray.full" : "doc.text")
+                .foregroundStyle(.tint)
                 .frame(width: 24)
-            VStack(alignment: .leading) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(file.displayName)
                 Text(file.role.rawValue.capitalized)
                     .font(.caption)
@@ -110,6 +157,7 @@ public struct SettingsView: View {
                 .font(.caption)
             }
         }
+        .padding(.vertical, 2)
     }
 
     private func icon(for kind: FileSourceKind) -> String {
@@ -145,25 +193,40 @@ public struct SettingsView: View {
         )
     }
 
-    // MARK: - Importers
+    // MARK: - File pickers
 
-    private func handleFileImport(_ result: Result<[URL], Error>) {
-        switch result {
-        case .success(let urls):
-            guard let url = urls.first else { return }
+    private func addFile() {
+        #if os(macOS)
+        // SwiftUI's `.fileImporter` doesn't reliably present from inside the macOS
+        // Settings scene, so we drive an `NSOpenPanel` directly.
+        let panel = NSOpenPanel()
+        panel.title = "Add Task File"
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = [.plainText, .text]
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
             Task { await model.addExternalFile(url) }
-        case .failure:
-            break
         }
+        #else
+        showFileImporter = true
+        #endif
     }
 
-    private func handleFolderImport(_ result: Result<[URL], Error>) {
-        switch result {
-        case .success(let urls):
-            guard let url = urls.first else { return }
+    private func addFolder() {
+        #if os(macOS)
+        let panel = NSOpenPanel()
+        panel.title = "Add Folder of Task Files"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
             Task { await model.addExternalFolder(url) }
-        case .failure:
-            break
         }
+        #else
+        showFolderImporter = true
+        #endif
     }
 }
