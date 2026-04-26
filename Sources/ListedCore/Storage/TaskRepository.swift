@@ -261,12 +261,92 @@ public actor TaskRepository {
 
         // 3. Apply mutation, render, and write.
         try mutation(&working)
+        // Optionally re-partition so all completed tasks sit at the bottom of
+        // the file. Stable: preserves existing order within each group, which
+        // means manual drag-and-drop reorder + completion ordering compose
+        // cleanly. Driven by the workspace setting; off → file untouched.
+        if workspace.settings.groupCompletedAtBottom {
+            partitionCompletedToBottom(&working)
+        }
         let newText = working.renderAndHash()
         try io.writeUTF8(newText, to: url)
         files[taskFileID] = working
         updateLastLoaded(for: taskFileID, hash: working.contentHash)
         cache?.write(newText, for: taskFileID)
         emit(.fileSaved(taskFileID))
+    }
+
+    /// Stably re-orders tasks so all non-completed tasks come first (in their
+    /// existing order), followed by all completed tasks (in their existing order).
+    /// Blank-line "spacer" rows are kept where they sit relative to the active
+    /// group so the file's section breaks remain readable in plain text.
+    private func partitionCompletedToBottom(_ file: inout TodoTxtFile) {
+        var active: [TodoTask] = []
+        var completed: [TodoTask] = []
+        active.reserveCapacity(file.tasks.count)
+        for task in file.tasks {
+            // Blank rows live with the active section so they continue to read
+            // as visual spacers between active items rather than between
+            // completed ones.
+            if task.isCompleted {
+                completed.append(task)
+            } else {
+                active.append(task)
+            }
+        }
+        // No-op if order is already correct (avoids touching contentHash).
+        if active.elementsEqual(file.tasks.prefix(active.count)) &&
+           completed.elementsEqual(file.tasks.suffix(completed.count)) {
+            return
+        }
+        var renumbered: [TodoTask] = []
+        renumbered.reserveCapacity(active.count + completed.count)
+        for (idx, task) in (active + completed).enumerated() {
+            var t = task
+            t.lineNumber = idx + 1
+            renumbered.append(t)
+        }
+        file.tasks = renumbered
+    }
+
+    // MARK: - Purge
+
+    /// Permanently delete every completed task whose `completionDate` is on or
+    /// before `cutoff`. Tasks with no completion date are deleted unconditionally
+    /// when `cutoff` is `nil` (used by the "Delete now" button) and skipped
+    /// otherwise (we'd rather keep something undated than mis-delete it).
+    ///
+    /// Returns the total number of removed lines across all enabled active files.
+    @discardableResult
+    public func purgeCompletedTasks(olderThan cutoff: LocalDate?) async throws -> Int {
+        var totalRemoved = 0
+        for tf in enabledTaskFiles() where tf.role != .reference {
+            let removed = try await purgeCompleted(in: tf.id, olderThan: cutoff)
+            totalRemoved += removed
+        }
+        return totalRemoved
+    }
+
+    /// Purge inside a single file. Returns the number of lines removed.
+    @discardableResult
+    public func purgeCompleted(in taskFileID: UUID, olderThan cutoff: LocalDate?) async throws -> Int {
+        var removed = 0
+        try await mutate(taskFileID: taskFileID) { file in
+            let before = file.tasks.count
+            file.tasks.removeAll { task in
+                guard task.isCompleted else { return false }
+                guard let cutoff else { return true } // "Delete now" — drop everything completed
+                guard let done = task.completionDate else { return false }
+                return done <= cutoff
+            }
+            // Renumber whatever's left so subsequent edits don't think the
+            // remaining tasks are at stale line positions.
+            for i in file.tasks.indices {
+                file.tasks[i].lineNumber = i + 1
+            }
+            removed = before - file.tasks.count
+        }
+        return removed
     }
 
     // MARK: - Add task
@@ -319,20 +399,6 @@ public actor TaskRepository {
         var moved = task
         moved.sourceFileID = destinationID
         _ = try await appendTask(moved, to: destinationID)
-    }
-
-    // MARK: - Archive
-
-    /// Archive every completed task in `sourceID` into `destinationID`. Returns the
-    /// number of tasks moved.
-    @discardableResult
-    public func archiveCompleted(from sourceID: UUID, to destinationID: UUID) async throws -> Int {
-        guard let source = files[sourceID] else { return 0 }
-        let completed = source.tasks.filter { $0.isCompleted }
-        for task in completed {
-            try await moveTask(task, toFileID: destinationID)
-        }
-        return completed.count
     }
 
     // MARK: - Reorder

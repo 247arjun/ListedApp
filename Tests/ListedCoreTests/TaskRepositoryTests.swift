@@ -14,8 +14,7 @@ final class TaskRepositoryTests: XCTestCase {
         )
         let source = FileSource(displayName: "Test Local", kind: .appLocalContainer)
         let active = TaskFile(sourceID: source.id, displayName: "todo.txt", relativePath: "todo.txt")
-        let archive = TaskFile(sourceID: source.id, displayName: "done.txt", relativePath: "done.txt", role: .completedArchive)
-        let workspace = Workspace(fileSources: [source], taskFiles: [active, archive], defaultTaskFileID: active.id)
+        let workspace = Workspace(fileSources: [source], taskFiles: [active], defaultTaskFileID: active.id)
         return (workspace, tmp, resolver)
     }
 
@@ -40,29 +39,85 @@ final class TaskRepositoryTests: XCTestCase {
         XCTAssertTrue(onDisk.contains("Buy milk"))
     }
 
-    func testCompleteArchiveMovesLine() async throws {
+    /// Completing a task should move that line to the bottom section of the same
+    /// file (single-file completion model). No `done.txt` is involved.
+    func testCompletePartitionsToBottomOfSameFile() async throws {
+        var (workspace, tmp, resolver) = makeTempWorkspace()
+        workspace.settings.groupCompletedAtBottom = true
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        let repo = TaskRepository(workspace: workspace, resolver: resolver)
+        let activeID = workspace.taskFiles[0].id
+
+        // Seed three tasks: A, B, C — initially in that order.
+        try "Alpha\nBravo\nCharlie\n".write(to: tmp.appendingPathComponent("todo.txt"), atomically: true, encoding: .utf8)
+        try await repo.load(taskFileID: activeID)
+        let fileOpt = await repo.file(forTaskFileID: activeID)
+        let file = try XCTUnwrap(fileOpt)
+        let bravo = try XCTUnwrap(file.tasks.first(where: { $0.description == "Bravo" }))
+
+        // Complete the middle one. The on-disk file should become Alpha, Charlie, x Bravo.
+        let completed = TaskOperations.complete(bravo, on: LocalDate(year: 2026, month: 4, day: 25))
+        try await repo.replace(task: completed)
+
+        let onDisk = try String(contentsOf: tmp.appendingPathComponent("todo.txt"), encoding: .utf8)
+        let lines = onDisk.split(separator: "\n").map(String.init)
+        XCTAssertEqual(lines.count, 3)
+        XCTAssertEqual(lines[0], "Alpha")
+        XCTAssertEqual(lines[1], "Charlie")
+        XCTAssertTrue(lines[2].hasPrefix("x 2026-04-25 Bravo"), "got: \(lines[2])")
+    }
+
+    /// "Delete now" purge removes every completed task regardless of date.
+    func testPurgeNowRemovesAllCompleted() async throws {
         let (workspace, tmp, resolver) = makeTempWorkspace()
         defer { try? FileManager.default.removeItem(at: tmp) }
 
         let repo = TaskRepository(workspace: workspace, resolver: resolver)
         let activeID = workspace.taskFiles[0].id
-        let archiveID = workspace.taskFiles[1].id
 
+        try """
+        Alpha
+        x 2026-04-20 Old completed
+        Bravo
+        x 2026-04-25 Newer completed
+        """.write(to: tmp.appendingPathComponent("todo.txt"), atomically: true, encoding: .utf8)
         try await repo.load(taskFileID: activeID)
-        try await repo.load(taskFileID: archiveID)
 
-        var task = TaskOperations.make(description: "Pay bill", sourceFileID: activeID, lineNumber: 1, addUID: false, addCreationDate: false)
-        task = try await repo.appendTask(task, to: activeID)
+        let removed = try await repo.purgeCompletedTasks(olderThan: nil)
+        XCTAssertEqual(removed, 2)
 
-        let completed = TaskOperations.complete(task, on: LocalDate(year: 2026, month: 4, day: 25))
-        try await repo.replace(task: completed)
-        let movedCount = try await repo.archiveCompleted(from: activeID, to: archiveID)
-        XCTAssertEqual(movedCount, 1)
+        let onDisk = try String(contentsOf: tmp.appendingPathComponent("todo.txt"), encoding: .utf8)
+        XCTAssertFalse(onDisk.contains("Old completed"))
+        XCTAssertFalse(onDisk.contains("Newer completed"))
+        XCTAssertTrue(onDisk.contains("Alpha"))
+        XCTAssertTrue(onDisk.contains("Bravo"))
+    }
 
-        let activeText = try String(contentsOf: tmp.appendingPathComponent("todo.txt"), encoding: .utf8)
-        let archiveText = try String(contentsOf: tmp.appendingPathComponent("done.txt"), encoding: .utf8)
-        XCTAssertFalse(activeText.contains("Pay bill"))
-        XCTAssertTrue(archiveText.contains("Pay bill"))
+    /// Scheduled (date-bounded) purge only removes tasks completed on or before the cutoff.
+    func testPurgeWithCutoffKeepsRecentCompleted() async throws {
+        let (workspace, tmp, resolver) = makeTempWorkspace()
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        let repo = TaskRepository(workspace: workspace, resolver: resolver)
+        let activeID = workspace.taskFiles[0].id
+
+        try """
+        Alpha
+        x 2026-04-15 Old one
+        x 2026-04-24 Recent one
+        """.write(to: tmp.appendingPathComponent("todo.txt"), atomically: true, encoding: .utf8)
+        try await repo.load(taskFileID: activeID)
+
+        // Cutoff = 2026-04-20. "Old one" (April 15) should go; "Recent one" (April 24) should stay.
+        let cutoff = LocalDate(year: 2026, month: 4, day: 20)
+        let removed = try await repo.purgeCompletedTasks(olderThan: cutoff)
+        XCTAssertEqual(removed, 1)
+
+        let onDisk = try String(contentsOf: tmp.appendingPathComponent("todo.txt"), encoding: .utf8)
+        XCTAssertFalse(onDisk.contains("Old one"))
+        XCTAssertTrue(onDisk.contains("Recent one"))
+        XCTAssertTrue(onDisk.contains("Alpha"))
     }
 
     func testReloadDetectsExternalEdit() async throws {

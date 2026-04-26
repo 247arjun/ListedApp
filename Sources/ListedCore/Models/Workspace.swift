@@ -131,11 +131,56 @@ public enum DeleteMode: String, Codable, Sendable, Hashable, CaseIterable {
     case ask      // prompt every time (default)
 }
 
+/// How often Listed should auto-purge completed tasks from the active file.
+/// Listed keeps everything in `todo.txt` (no `done.txt`); completed lines drift
+/// to the bottom and get culled by this schedule.
+public enum PurgeCadence: String, Codable, Sendable, Hashable, CaseIterable {
+    /// Never auto-purge. The user can still tap "Delete completed tasks now".
+    case never
+    /// Daily — anything completed > 1 day ago is removed.
+    case daily
+    /// Weekly — anything completed > 7 days ago is removed.
+    case weekly
+    /// Monthly — anything completed > 30 days ago is removed.
+    case monthly
+
+    /// How many days of completed history to retain. `nil` means "no auto-purge".
+    public var retentionDays: Int? {
+        switch self {
+        case .never: return nil
+        case .daily: return 1
+        case .weekly: return 7
+        case .monthly: return 30
+        }
+    }
+
+    /// Minimum gap between auto-purge runs. Avoids re-purging on every launch.
+    public var minimumInterval: TimeInterval? {
+        switch self {
+        case .never: return nil
+        case .daily: return 60 * 60 * 12        // run at most ~twice a day
+        case .weekly: return 60 * 60 * 24       // run at most once a day
+        case .monthly: return 60 * 60 * 24 * 3  // run at most every three days
+        }
+    }
+
+    public var displayName: String {
+        switch self {
+        case .never: return "Never"
+        case .daily: return "Daily"
+        case .weekly: return "Weekly"
+        case .monthly: return "Monthly"
+        }
+    }
+}
+
 public struct AppSettings: Codable, Hashable, Sendable {
     public var addCreationDateToNewTasks: Bool
     public var addUIDToNewTasks: Bool
     public var preservePriorityOnCompletion: Bool
-    public var autoArchiveCompletedTasks: Bool
+    public var groupCompletedAtBottom: Bool
+    public var completedAutoPurge: PurgeCadence
+    public var lastPurgeAt: Date?
     public var showCompletedInLists: Bool
     public var showRawMetadataInRows: Bool
     public var priorityRowHighlight: Bool
@@ -146,7 +191,9 @@ public struct AppSettings: Codable, Hashable, Sendable {
         addCreationDateToNewTasks: Bool = true,
         addUIDToNewTasks: Bool = true,
         preservePriorityOnCompletion: Bool = true,
-        autoArchiveCompletedTasks: Bool = false,
+        groupCompletedAtBottom: Bool = true,
+        completedAutoPurge: PurgeCadence = .never,
+        lastPurgeAt: Date? = nil,
         showCompletedInLists: Bool = false,
         showRawMetadataInRows: Bool = false,
         priorityRowHighlight: Bool = true,
@@ -156,7 +203,9 @@ public struct AppSettings: Codable, Hashable, Sendable {
         self.addCreationDateToNewTasks = addCreationDateToNewTasks
         self.addUIDToNewTasks = addUIDToNewTasks
         self.preservePriorityOnCompletion = preservePriorityOnCompletion
-        self.autoArchiveCompletedTasks = autoArchiveCompletedTasks
+        self.groupCompletedAtBottom = groupCompletedAtBottom
+        self.completedAutoPurge = completedAutoPurge
+        self.lastPurgeAt = lastPurgeAt
         self.showCompletedInLists = showCompletedInLists
         self.showRawMetadataInRows = showRawMetadataInRows
         self.priorityRowHighlight = priorityRowHighlight

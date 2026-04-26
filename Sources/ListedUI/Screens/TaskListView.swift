@@ -198,15 +198,20 @@ public struct TaskListView: View {
         }
     }
 
-    /// Drag-and-drop reordering. Constrained to **same file + same priority**:
-    /// dragging a task across priority buckets or between files is silently
-    /// ignored, because the visible list is sorted/filtered and a cross-bucket
-    /// reorder wouldn't survive the next sort. The new order is persisted as the
+    /// Drag-and-drop reordering. Constrained to **same file + same priority +
+    /// same completion state**: dragging across priority buckets, between files,
+    /// or between active/completed sections is silently ignored, because the
+    /// visible list is sorted/filtered and a cross-bucket reorder wouldn't
+    /// survive the next sort/partition. The new order is persisted as the
     /// actual line order in the underlying todo.txt file.
     private func handleMove(from source: IndexSet, to destination: Int) {
         guard let srcIdx = source.first, source.count == 1 else { return }
         let visible = model.visibleTasks
         let movingTask = visible[srcIdx]
+
+        // Reordering completed tasks is meaningless: they all live in the
+        // bottom section and the next mutation will re-partition them.
+        guard !movingTask.isCompleted else { return }
 
         // Translate SwiftUI's destination (post-move insertion offset) into the
         // visible task we're landing adjacent to.
@@ -219,15 +224,21 @@ public struct TaskListView: View {
         guard anchorIdx >= 0, anchorIdx < visible.count, anchorIdx != srcIdx else { return }
         let anchor = visible[anchorIdx]
 
-        // Constraint: only allow within the same file + same priority bucket.
+        // Constraint: only allow within the same file + same priority bucket
+        // AND only between two active tasks. Cross-section drags are no-ops.
         guard movingTask.sourceFileID == anchor.sourceFileID,
-              movingTask.priority == anchor.priority else { return }
+              movingTask.priority == anchor.priority,
+              !anchor.isCompleted else { return }
 
         // Compute the new visible order, then extract the bucket order in that list.
         var newVisible = visible
         newVisible.move(fromOffsets: source, toOffset: destination)
         let bucketIDs = newVisible
-            .filter { $0.sourceFileID == movingTask.sourceFileID && $0.priority == movingTask.priority }
+            .filter {
+                $0.sourceFileID == movingTask.sourceFileID
+                    && $0.priority == movingTask.priority
+                    && !$0.isCompleted
+            }
             .map { $0.id }
 
         Task {

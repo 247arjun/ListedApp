@@ -37,19 +37,10 @@ public final class StorageBootstrap: @unchecked Sendable {
             sortOrder: 0
         )
 
-        let archive = TaskFile(
-            sourceID: source.id,
-            displayName: "done.txt",
-            relativePath: "done.txt",
-            role: .completedArchive,
-            isEnabled: false,
-            sortOrder: 1
-        )
-
         return Workspace(
             name: "Default",
             fileSources: [source],
-            taskFiles: [active, archive],
+            taskFiles: [active],
             defaultTaskFileID: active.id
         )
     }
@@ -114,12 +105,15 @@ public final class StorageBootstrap: @unchecked Sendable {
 
         var taskFiles: [TaskFile] = []
         for (index, name) in txtFiles.enumerated() {
-            let role: TaskFileRole = (name == "done.txt") ? .completedArchive : .activeTodo
+            // Listed no longer treats `done.txt` specially — single-file model
+            // keeps completed lines at the bottom of the active file. If a user
+            // has an existing `done.txt` we just import it as another active
+            // file alongside the rest.
             taskFiles.append(TaskFile(
                 sourceID: source.id,
                 displayName: name,
                 relativePath: name,
-                role: role,
+                role: .activeTodo,
                 sortOrder: workspace.taskFiles.count + index
             ))
         }

@@ -12,6 +12,9 @@ public struct SettingsView: View {
 
     @State private var showFileImporter: Bool = false
     @State private var showFolderImporter: Bool = false
+    @State private var showPurgeConfirmation: Bool = false
+    @State private var purgeResultMessage: String?
+    @State private var purgeResultIsError: Bool = false
 
     public init() {}
 
@@ -44,6 +47,7 @@ public struct SettingsView: View {
             storageSection
             filesSection
             appearanceSection
+            completedSection
             behaviorSection
         }
         // .fileImporter is unreliable inside macOS Settings scenes — see addFile()
@@ -108,8 +112,80 @@ public struct SettingsView: View {
             Toggle("Add creation date to new tasks", isOn: bind(\.settings.addCreationDateToNewTasks))
             Toggle("Add UID to new tasks", isOn: bind(\.settings.addUIDToNewTasks))
             Toggle("Preserve priority on completion", isOn: bind(\.settings.preservePriorityOnCompletion))
-            Toggle("Auto-archive completed tasks", isOn: bind(\.settings.autoArchiveCompletedTasks))
+            Toggle("Group completed at bottom", isOn: bind(\.settings.groupCompletedAtBottom))
             Toggle("Show completed tasks in lists", isOn: bind(\.settings.showCompletedInLists))
+        }
+    }
+
+    /// Single-file completion model: instead of moving completed tasks to a
+    /// separate `done.txt`, Listed keeps them at the bottom of the active file
+    /// and offers an opt-in schedule for hard-deleting them.
+    private var completedSection: some View {
+        Section {
+            Picker("Auto-delete completed", selection: Binding(
+                get: { model.workspace.settings.completedAutoPurge },
+                set: { newValue in
+                    var updated = model.workspace
+                    updated.settings.completedAutoPurge = newValue
+                    try? model.workspaceStore.save(updated)
+                    model.replaceWorkspace(updated)
+                    Task { await model.repository.updateWorkspace(updated) }
+                }
+            )) {
+                ForEach(PurgeCadence.allCases, id: \.self) { cadence in
+                    Text(cadence.displayName).tag(cadence)
+                }
+            }
+
+            if let last = model.workspace.settings.lastPurgeAt {
+                HStack {
+                    Text("Last purge")
+                    Spacer()
+                    Text(last.formatted(date: .abbreviated, time: .shortened))
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Button(role: .destructive) {
+                showPurgeConfirmation = true
+            } label: {
+                Label("Delete completed tasks now", systemImage: "trash")
+            }
+            .confirmationDialog(
+                "Delete all completed tasks from every active file? This can\u{2019}t be undone.",
+                isPresented: $showPurgeConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("Delete Now", role: .destructive) {
+                    Task {
+                        let count = await model.purgeCompletedTasksNow()
+                        await MainActor.run {
+                            purgeResultIsError = false
+                            purgeResultMessage = count == 1
+                                ? "Removed 1 completed task."
+                                : "Removed \(count) completed tasks."
+                        }
+                    }
+                }
+                Button("Cancel", role: .cancel) {}
+            }
+            .alert(
+                purgeResultIsError ? "Couldn\u{2019}t purge" : "Done",
+                isPresented: Binding(
+                    get: { purgeResultMessage != nil },
+                    set: { if !$0 { purgeResultMessage = nil } }
+                )
+            ) {
+                Button("OK") { purgeResultMessage = nil }
+            } message: {
+                Text(purgeResultMessage ?? "")
+            }
+        } header: {
+            Text("Completed Tasks")
+        } footer: {
+            Text("Listed keeps completed tasks at the bottom of your todo.txt file. Auto-delete removes them on the chosen schedule (anything older than the cadence window). Files always store standard `(A)` syntax for compatibility.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
         }
     }
 

@@ -77,7 +77,11 @@ public final class AppModel {
         var workspace: Workspace
         do {
             if let saved = try store.load() {
-                workspace = saved
+                workspace = migrateSingleFileModel(saved)
+                // Persist the migration so the next launch reads a clean workspace.
+                if workspace != saved {
+                    try? store.save(workspace)
+                }
             } else {
                 // No saved workspace — first launch. We deliberately do NOT call
                 // `bootstrap.makeInitialWorkspace` here because it touches iCloud.
@@ -141,6 +145,10 @@ public final class AppModel {
         Task { [weak self] in
             guard let self else { return }
             await self.refresh()
+            // After the refresh has populated loadedFiles, run the scheduled
+            // completed-task purge if the cadence + cooldown call for it. The
+            // purge is no-op for users on the default `.never` cadence.
+            await self.runScheduledPurgeIfNeeded()
         }
     }
 
@@ -290,12 +298,6 @@ public final class AppModel {
         }
     }
 
-    public func archiveCompleted(in fileID: UUID, into archiveID: UUID) async {
-        await runMutation {
-            _ = try await self.repository.archiveCompleted(from: fileID, to: archiveID)
-        }
-    }
-
     public func moveTask(_ task: TodoTask, to destinationID: UUID) async {
         await runMutation {
             try await self.repository.moveTask(task, toFileID: destinationID)
@@ -309,6 +311,60 @@ public final class AppModel {
         await runMutation {
             try await self.repository.reorderTasksInFile(fileID, taskIDs: taskIDs)
         }
+    }
+
+    // MARK: - Purge completed
+
+    /// Manual "Delete completed tasks now". Removes every completed task across
+    /// all enabled active files, regardless of completion date. Updates
+    /// `lastPurgeAt` on success so the auto-purge cooldown is reset.
+    @discardableResult
+    public func purgeCompletedTasksNow() async -> Int {
+        return await runPurge(olderThan: nil)
+    }
+
+    /// Auto-purge entry point called from `startBackgroundRefresh()`. Honors
+    /// `settings.completedAutoPurge` and `settings.lastPurgeAt`; no-op if the
+    /// cadence is `.never` or the cooldown hasn't elapsed.
+    public func runScheduledPurgeIfNeeded(now: Date = Date()) async {
+        let cadence = workspace.settings.completedAutoPurge
+        guard let retention = cadence.retentionDays,
+              let interval = cadence.minimumInterval else { return }
+
+        if let last = workspace.settings.lastPurgeAt,
+           now.timeIntervalSince(last) < interval {
+            return
+        }
+        let cutoff = LocalDate.today().adding(days: -retention)
+        _ = await runPurge(olderThan: cutoff, now: now)
+    }
+
+    /// Shared purge worker. Returns the number of tasks removed.
+    @discardableResult
+    private func runPurge(olderThan cutoff: LocalDate?, now: Date = Date()) async -> Int {
+        var removed = 0
+        do {
+            removed = try await repository.purgeCompletedTasks(olderThan: cutoff)
+            self.loadedFiles = await repository.loadedFiles()
+        } catch {
+            self.lastError = AppError(title: "Couldn't purge completed tasks", message: error.localizedDescription)
+            return 0
+        }
+        // Persist the purge timestamp regardless of how many were removed —
+        // we still ran a check, and the cooldown is about "did we already try
+        // recently," not "did we delete anything."
+        var updated = workspace
+        updated.settings.lastPurgeAt = now
+        do {
+            try workspaceStore.save(updated)
+            self.workspace = updated
+            await repository.updateWorkspace(updated)
+        } catch {
+            // Persistence failure shouldn't roll back the purge — the lines are
+            // already gone on disk and that's user-visible. Surface a banner.
+            self.lastError = AppError(title: "Couldn't save settings", message: error.localizedDescription)
+        }
+        return removed
     }
 
     public func dismissError() {
@@ -390,4 +446,16 @@ public enum SidebarSelection: Hashable, Sendable {
         case .priority(let p): return .priority(p)
         }
     }
+}
+
+/// One-time workspace migration applied at launch. Drops any `completedArchive`-role
+/// task files left over from older Listed builds (back when there was a separate
+/// `done.txt`). The on-disk `done.txt` is left alone — the user can still open it
+/// later by re-importing it as an active file from Settings.
+private func migrateSingleFileModel(_ workspace: Workspace) -> Workspace {
+    var updated = workspace
+    let archiveFiles = updated.taskFiles.filter { $0.role == .completedArchive }
+    guard !archiveFiles.isEmpty else { return workspace }
+    updated.taskFiles.removeAll { $0.role == .completedArchive }
+    return updated
 }
