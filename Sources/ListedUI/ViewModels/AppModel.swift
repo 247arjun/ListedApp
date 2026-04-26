@@ -269,6 +269,17 @@ public final class AppModel {
         }
     }
 
+    /// Append a fully-prepared `TodoTask` to `fileID`. Used by the iOS new-task
+    /// sheet, which builds the draft locally (with priority, due date, projects,
+    /// contexts, threshold, raw line) and only commits when the user taps Add.
+    public func appendPreparedTask(_ task: TodoTask, to fileID: UUID) async {
+        var prepared = task
+        prepared.sourceFileID = fileID
+        await runMutation {
+            _ = try await self.repository.appendTask(prepared, to: fileID)
+        }
+    }
+
     public func archiveCompleted(in fileID: UUID, into archiveID: UUID) async {
         await runMutation {
             _ = try await self.repository.archiveCompleted(from: fileID, to: archiveID)

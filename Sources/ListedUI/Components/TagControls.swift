@@ -68,7 +68,12 @@ public struct AddTagButton: View {
         .popover(isPresented: $isPresented, arrowEdge: .top) {
             popoverContent
                 .padding(14)
-                .frame(minWidth: 260)
+                .frame(minWidth: 280, idealWidth: 320)
+                // On iOS, popovers normally adapt to a full-screen sheet on
+                // compact-width devices. Force the actual popover treatment
+                // (small floating panel anchored to the + button) so the user
+                // doesn't get a giant slideover for a single text field.
+                .presentationCompactAdaptation(.popover)
         }
     }
 

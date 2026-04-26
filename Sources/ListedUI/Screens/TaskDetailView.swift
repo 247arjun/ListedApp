@@ -32,34 +32,56 @@ public struct TaskDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         #endif
         .onAppear { sync(from: task) }
+        // The runtime id is preserved across raw-line edits, so a pure id-based
+        // onChange wouldn't fire when the user saves the raw line. Watch the
+        // raw text too so structured fields re-sync after a raw rewrite.
         .onChange(of: task.id) { _, _ in sync(from: task) }
+        .onChange(of: task.rawLine) { _, _ in sync(from: task) }
     }
 
     // MARK: - Cards
 
     private var headerCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
+            // Checkbox + title share one line. The TextField uses axis: .vertical
+            // so it grows downward to wrap long titles, but the leading checkbox
+            // stays anchored at the first text baseline of the field.
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
                 CompletionToggle(
                     isCompleted: task.isCompleted,
                     tint: (task.priority ?? task.preservedPriority).map(DesignTokens.priorityColor) ?? .accentColor,
                     onToggle: { Task { await model.toggleCompletion(task) } }
                 )
-                if let due = task.dueDate {
-                    Chip(DesignTokens.dueLabel(for: due), systemImage: "calendar", style: .accent(DesignTokens.dueColor(for: due)))
-                }
-                if let p = task.priority ?? task.preservedPriority {
-                    Chip("Priority \(p)", systemImage: "flag.fill", style: .accent(DesignTokens.priorityColor(p)))
-                }
-                Spacer()
+                .alignmentGuide(.firstTextBaseline) { d in d[.bottom] - 4 }
+
+                TextField("Description", text: $description, axis: .vertical)
+                    .font(.title3.weight(.semibold))
+                    .textFieldStyle(.plain)
+                    .lineLimit(1...6)
+                    .submitLabel(.done)
+                    .onSubmit { commitDescription() }
             }
-            TextField("Description", text: $description, axis: .vertical)
-                .font(.title2.weight(.semibold))
-                .textFieldStyle(.plain)
-                .onSubmit { commitDescription() }
+
+            // Due / priority chips drop to a second line so they don't crowd the
+            // title. Hidden when neither is set.
+            if task.dueDate != nil || task.priority != nil || task.preservedPriority != nil {
+                HStack(spacing: 6) {
+                    if let due = task.dueDate {
+                        Chip(DesignTokens.dueLabel(for: due), systemImage: "calendar", style: .accent(DesignTokens.dueColor(for: due)))
+                    }
+                    if let p = task.priority ?? task.preservedPriority {
+                        Chip("Priority \(p)", systemImage: "flag.fill", style: .accent(DesignTokens.priorityColor(p)))
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(.leading, 28) // align under the title text
+            }
         }
         .padding(16)
         .background(card)
+        // Commit the description on focus loss too, not only on Return — the
+        // multi-line vertical field swallows Return as a newline.
+        .onChange(of: description) { _, _ in /* no-op; commit on submit */ }
     }
 
     private var fieldsCard: some View {
@@ -94,8 +116,8 @@ public struct TaskDetailView: View {
                     }
                 )) {
                     Text("—").tag("—")
-                    ForEach(["A", "B", "C", "D", "E"], id: \.self) { letter in
-                        Text(letter).tag(letter)
+                    ForEach(DesignTokens.pickerPriorities, id: \.self) { letter in
+                        Text(String(letter)).tag(String(letter))
                     }
                 }
                 .labelsHidden()

@@ -9,6 +9,8 @@ public struct TaskListView: View {
     #endif
     @State private var newTaskText: String = ""
     @FocusState private var newTaskFieldFocused: Bool
+    /// iOS-only: presents a sheet-based composer when the user taps the + button.
+    @State private var showAddSheet: Bool = false
 
     public init() {}
 
@@ -17,7 +19,12 @@ public struct TaskListView: View {
 
         VStack(spacing: 0) {
             list
+            // Inline composer takes a permanent slice of the screen — fine on
+            // macOS where vertical space is plentiful, but wasteful on iPhone
+            // where the toolbar `+` already opens a sheet for adding.
+            #if os(macOS)
             inlineComposer
+            #endif
         }
         .navigationTitle(navigationTitle)
         #if os(macOS)
@@ -35,6 +42,14 @@ public struct TaskListView: View {
         )
         #endif
         .toolbar { toolbarItems }
+        #if os(iOS)
+        .sheet(isPresented: $showAddSheet) {
+            AddTaskSheet(targetFileID: composerTargetFileID)
+                .environment(model)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+        }
+        #endif
     }
 
     private var navigationTitle: String {
@@ -379,9 +394,13 @@ public struct TaskListView: View {
             }
 
             Button {
+                #if os(iOS)
+                showAddSheet = true
+                #else
                 if composerTargetFileID != nil {
                     newTaskFieldFocused = true
                 }
+                #endif
             } label: {
                 Label("New Task", systemImage: "plus")
             }
