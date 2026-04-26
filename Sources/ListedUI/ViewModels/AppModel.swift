@@ -17,6 +17,9 @@ public final class AppModel {
     public internal(set) var loadedFiles: [TodoTxtFile] = []
     public internal(set) var lastError: AppError?
     public internal(set) var isBootstrapping: Bool = false
+    /// True while a background read of the real (non-cached) files is in flight.
+    /// Drives the small "Updating…" indicator in the toolbar — never blocks UI.
+    public internal(set) var isRefreshing: Bool = false
 
     /// Currently selected sidebar entry.
     public var selection: SidebarSelection = .smartList(.today)
@@ -38,44 +41,116 @@ public final class AppModel {
     public let repository: TaskRepository
     public let workspaceStore: WorkspaceStore
     public let bootstrap: StorageBootstrap
+    public let cache: TaskCacheStore
 
     // MARK: - Init
 
     public init(workspace: Workspace,
                 repository: TaskRepository,
                 workspaceStore: WorkspaceStore = WorkspaceStore(),
-                bootstrap: StorageBootstrap = StorageBootstrap()) {
+                bootstrap: StorageBootstrap = StorageBootstrap(),
+                cache: TaskCacheStore = TaskCacheStore()) {
         self.workspace = workspace
         self.repository = repository
         self.workspaceStore = workspaceStore
         self.bootstrap = bootstrap
+        self.cache = cache
     }
 
-    /// Convenience factory used by the App entry point on launch.
-    public static func makeForLaunch() async -> AppModel {
-        let store = WorkspaceStore()
-        let bootstrap = StorageBootstrap()
+    // MARK: - Synchronous launch path
+
+    /// Build the model **without ever touching iCloud**. Reads the saved workspace
+    /// JSON and the per-file disk cache, both of which live in Application Support
+    /// and resolve in microseconds. The result is a model whose `loadedFiles` is
+    /// already populated with the user's last-known tasks, ready to render in the
+    /// first frame.
+    ///
+    /// Call `startBackgroundRefresh()` afterwards to kick off the real iCloud /
+    /// external-file read on a background `Task`.
+    @MainActor
+    public static func makeForLaunchSynchronously() -> AppModel {
+        let resolver = FileURLResolver()
+        let store = WorkspaceStore(resolver: resolver)
+        let bootstrap = StorageBootstrap(resolver: resolver)
+        let cache = TaskCacheStore(resolver: resolver)
+
         var workspace: Workspace
         do {
             if let saved = try store.load() {
                 workspace = saved
             } else {
-                workspace = try bootstrap.makeInitialWorkspace(useICloud: bootstrap.isICloudAvailable)
-                try store.save(workspace)
+                // No saved workspace — first launch. We deliberately do NOT call
+                // `bootstrap.makeInitialWorkspace` here because it touches iCloud.
+                // The onboarding sheet (driven by an empty fileSources list) will
+                // take care of that explicitly.
+                workspace = Workspace()
             }
         } catch {
-            // Fall back to an in-memory empty workspace; the UI will surface an error.
             workspace = Workspace()
         }
-        let repo = TaskRepository(workspace: workspace)
-        let model = AppModel(workspace: workspace, repository: repo, workspaceStore: store, bootstrap: bootstrap)
+
+        // Read each enabled file's cached text directly on the calling thread.
+        // These are tiny synchronous file reads under Application Support — no
+        // iCloud, no NSFileCoordinator, no actor hop. Then we parse and hand
+        // the parsed files to the actor as a seed.
+        let parser = TodoTxtParser()
+        var primedFiles: [TodoTxtFile] = []
+        for tf in workspace.taskFiles where tf.isEnabled {
+            guard let text = cache.cachedText(for: tf.id) else { continue }
+            var parsed = TodoTxtFile.parse(text: text, taskFileID: tf.id, parser: parser)
+            parsed.contentHash = SHA256Hash.hex(of: text)
+            primedFiles.append(parsed)
+        }
+
+        let repo = TaskRepository(workspace: workspace, resolver: resolver, cache: cache)
+        let model = AppModel(
+            workspace: workspace,
+            repository: repo,
+            workspaceStore: store,
+            bootstrap: bootstrap,
+            cache: cache
+        )
+        model.loadedFiles = primedFiles
+
+        // Seed the actor with the same parsed files so subsequent reads/writes
+        // see the cache-warmed state. Fire-and-forget; the main UI doesn't wait.
+        Task.detached { await repo.seed(files: primedFiles) }
+
+        return model
+    }
+
+    /// Back-compat factory that performs the full async refresh before returning.
+    /// New code should prefer `makeForLaunchSynchronously()` plus a background
+    /// `startBackgroundRefresh()`.
+    public static func makeForLaunch() async -> AppModel {
+        let model = await MainActor.run { makeForLaunchSynchronously() }
         await model.refresh()
         return model
     }
 
     // MARK: - Lifecycle
 
+    /// Run the full read-from-source refresh on a background `Task`. Updates
+    /// `loadedFiles` (and surfaces a banner error for the first failure, if any)
+    /// when it completes. Safe to call repeatedly — the repository de-dupes via
+    /// content hash.
+    public func startBackgroundRefresh() {
+        // If we have no enabled files yet (truly first launch), there's nothing
+        // to fetch; the onboarding sheet will set things up and call refresh().
+        guard !workspace.taskFiles.isEmpty else { return }
+        Task { [weak self] in
+            guard let self else { return }
+            await self.refresh()
+        }
+    }
+
     public func refresh() async {
+        // Pre-warm the iCloud container resolution off the launch path.
+        Task.detached { [bootstrap] in
+            bootstrap.resolver.prewarmICloud()
+        }
+        isRefreshing = true
+        defer { isRefreshing = false }
         let errors = await repository.loadAllEnabled()
         let snapshot = await repository.loadedFiles()
         self.loadedFiles = snapshot

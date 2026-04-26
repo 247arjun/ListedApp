@@ -256,6 +256,14 @@ public struct TaskListView: View {
     @ToolbarContentBuilder
     private var toolbarItems: some ToolbarContent {
         ToolbarItemGroup(placement: .primaryAction) {
+            // Tiny non-blocking "syncing" indicator. Shown only while a background
+            // refresh is in flight; never gates the UI.
+            if model.isRefreshing {
+                ProgressView()
+                    .controlSize(.small)
+                    .help("Refreshing from iCloud\u{2026}")
+            }
+
             Menu {
                 Toggle("Show Completed", isOn: Binding(
                     get: { model.showCompleted },

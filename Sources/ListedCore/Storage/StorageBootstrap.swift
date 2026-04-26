@@ -4,7 +4,7 @@ import Foundation
 /// flow described in the spec (sections 6.2 / 6.3).
 public final class StorageBootstrap: @unchecked Sendable {
 
-    private let resolver: FileURLResolver
+    public let resolver: FileURLResolver
     private let io: CoordinatedFileIO
 
     public init(resolver: FileURLResolver = FileURLResolver(), io: CoordinatedFileIO = CoordinatedFileIO()) {

@@ -14,25 +14,63 @@ public final class FileURLResolver: @unchecked Sendable {
     /// Override hook for tests: when set, this URL is used as the local Documents root.
     private let localRootOverride: (() -> URL)?
 
+    /// Override hook for tests: when set, this URL is used as the Application Support root
+    /// (so the disposable cache and workspace JSON write into a sandboxed temp dir).
+    private let applicationSupportOverride: (() -> URL)?
+
+    /// Cached result of `FileManager.url(forUbiquityContainerIdentifier:)`.
+    /// That call routes through `bird` and can block for hundreds of milliseconds
+    /// (or longer on first launch). Once resolved we never need to ask again for
+    /// the lifetime of this process.
+    private let iCloudCacheLock = NSLock()
+    private var cachedICloudRoot: URL??
+
     public init(
         iCloudContainerIdentifier: String? = nil,
         iCloudRootOverride: (() -> URL?)? = nil,
-        localRootOverride: (() -> URL)? = nil
+        localRootOverride: (() -> URL)? = nil,
+        applicationSupportOverride: (() -> URL)? = nil
     ) {
         self.iCloudContainerIdentifier = iCloudContainerIdentifier
         self.iCloudRootOverride = iCloudRootOverride
         self.localRootOverride = localRootOverride
+        self.applicationSupportOverride = applicationSupportOverride
     }
 
     // MARK: - Roots
 
     /// Root URL of the app's iCloud Documents directory, if available.
+    /// **Process-cached** — the first call may block on `bird`; subsequent calls
+    /// return instantly.
     public func iCloudDocumentsURL() -> URL? {
         if let iCloudRootOverride { return iCloudRootOverride() }
-        guard let container = FileManager.default.url(forUbiquityContainerIdentifier: iCloudContainerIdentifier) else {
-            return nil
+        iCloudCacheLock.lock()
+        if let cached = cachedICloudRoot {
+            iCloudCacheLock.unlock()
+            return cached
         }
-        return container.appendingPathComponent("Documents", isDirectory: true)
+        iCloudCacheLock.unlock()
+
+        // Resolve outside the lock — the call into FileManager can take a while
+        // and we don't want to serialize all callers behind it.
+        let resolved: URL?
+        if let container = FileManager.default.url(forUbiquityContainerIdentifier: iCloudContainerIdentifier) {
+            resolved = container.appendingPathComponent("Documents", isDirectory: true)
+        } else {
+            resolved = nil
+        }
+
+        iCloudCacheLock.lock()
+        cachedICloudRoot = .some(resolved)
+        iCloudCacheLock.unlock()
+        return resolved
+    }
+
+    /// Pre-warm the iCloud container resolution off the launch path. Calling this
+    /// from a background `Task` once at startup means subsequent UI-driven calls
+    /// to `iCloudDocumentsURL()` always hit the cache.
+    public func prewarmICloud() {
+        _ = iCloudDocumentsURL()
     }
 
     /// Root URL of the app's local Documents directory.
@@ -44,6 +82,11 @@ public final class FileURLResolver: @unchecked Sendable {
 
     /// Root URL of the app's Application Support directory (used for workspace metadata).
     public func applicationSupportURL() -> URL {
+        if let applicationSupportOverride {
+            let dir = applicationSupportOverride()
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            return dir
+        }
         let urls = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
         let base = urls.first ?? URL(fileURLWithPath: NSTemporaryDirectory())
         let dir = base.appendingPathComponent("Listed", isDirectory: true)

@@ -26,6 +26,9 @@ public actor TaskRepository {
     private let io: CoordinatedFileIO
     private let parser: TodoTxtParser
     private let serializer: TodoTxtSerializer
+    /// Optional disk cache. When provided, every successful load/write also stamps
+    /// the cache so the next launch can paint instantly without touching iCloud.
+    private let cache: TaskCacheStore?
 
     // MARK: - State
 
@@ -40,13 +43,42 @@ public actor TaskRepository {
         resolver: FileURLResolver = FileURLResolver(),
         io: CoordinatedFileIO = CoordinatedFileIO(),
         parser: TodoTxtParser = TodoTxtParser(),
-        serializer: TodoTxtSerializer = TodoTxtSerializer()
+        serializer: TodoTxtSerializer = TodoTxtSerializer(),
+        cache: TaskCacheStore? = nil
     ) {
         self.workspace = workspace
         self.resolver = resolver
         self.io = io
         self.parser = parser
         self.serializer = serializer
+        self.cache = cache
+    }
+
+    // MARK: - Cache priming
+
+    /// Synchronously preload all enabled files from the disposable cache, **without
+    /// touching iCloud Drive or any security-scoped resource**. This is what powers
+    /// the no-spinner launch path: call it from the launch task and the in-memory
+    /// `loadedFiles()` will already be populated by the time the first frame paints.
+    public func primeFromCache() {
+        guard let cache else { return }
+        for tf in enabledTaskFiles() {
+            // Skip files we've already loaded this session.
+            if files[tf.id] != nil { continue }
+            guard let text = cache.cachedText(for: tf.id) else { continue }
+            var parsed = TodoTxtFile.parse(text: text, taskFileID: tf.id, parser: parser)
+            parsed.contentHash = SHA256Hash.hex(of: text)
+            files[tf.id] = parsed
+        }
+    }
+
+    /// Seed the actor's in-memory state with files that were already parsed by a
+    /// caller (typically the synchronous launch path). Used to hand pre-rendered
+    /// cache contents to the repository without performing any disk I/O ourselves.
+    public func seed(files newFiles: [TodoTxtFile]) {
+        for file in newFiles where files[file.taskFileID] == nil {
+            files[file.taskFileID] = file
+        }
     }
 
     // MARK: - Workspace access
@@ -103,11 +135,22 @@ public actor TaskRepository {
         defer { resolved.release() }
 
         let url = resolved.url
+        // On iOS especially, an iCloud Drive file may not be materialized yet.
+        // Nudge the daemon to download it; we don't await — the read below will
+        // block on coordination either way, but on subsequent launches the file
+        // is more likely to already be local.
+        #if os(iOS)
+        if source.kind == .appICloudContainer {
+            try? FileManager.default.startDownloadingUbiquitousItem(at: url)
+        }
+        #endif
+
         if !io.fileExists(at: url) {
             // Treat a missing file as empty content.
             let empty = TodoTxtFile(taskFileID: taskFileID, tasks: [], lineEnding: .lf, hasTrailingNewline: true, contentHash: SHA256Hash.hex(of: ""))
             files[taskFileID] = empty
             updateLastLoaded(for: taskFileID, hash: empty.contentHash)
+            cache?.write("", for: taskFileID)
             emit(.fileLoaded(taskFileID))
             return .loaded(empty)
         }
@@ -115,27 +158,48 @@ public actor TaskRepository {
         let text = try io.readUTF8(at: url)
         let hash = SHA256Hash.hex(of: text)
         if let existing = files[taskFileID], existing.contentHash == hash {
+            // Make sure the cache reflects what we just confirmed on disk, even
+            // if our in-memory copy is unchanged. (No-op if cache already matches.)
+            cache?.write(text, for: taskFileID)
             return .unchanged
         }
         var parsed = TodoTxtFile.parse(text: text, taskFileID: taskFileID, parser: parser)
         parsed.contentHash = hash
         files[taskFileID] = parsed
         updateLastLoaded(for: taskFileID, hash: hash)
+        cache?.write(text, for: taskFileID)
         emit(.fileLoaded(taskFileID))
         return .loaded(parsed)
     }
 
-    /// Load every enabled file. Errors per-file are returned but do not abort the batch.
+    /// Load every enabled file in parallel.
+    ///
+    /// Each file load is independent — a slow iCloud download for `work.txt`
+    /// must not gate the read of a fast local `personal.txt`. We fan out via a
+    /// `TaskGroup` and only resolve the actor (this `TaskRepository`) inside
+    /// each child task, so the actor itself isn't a serialization bottleneck.
     public func loadAllEnabled() async -> [(UUID, Error)] {
-        var errors: [(UUID, Error)] = []
-        for tf in enabledTaskFiles() {
-            do {
-                _ = try await load(taskFileID: tf.id)
-            } catch {
-                errors.append((tf.id, error))
+        let tasksToLoad = enabledTaskFiles()
+        if tasksToLoad.isEmpty { return [] }
+
+        return await withTaskGroup(of: (UUID, Error?).self) { group in
+            for tf in tasksToLoad {
+                group.addTask { [weak self] in
+                    guard let self else { return (tf.id, nil) }
+                    do {
+                        try await self.load(taskFileID: tf.id)
+                        return (tf.id, nil)
+                    } catch {
+                        return (tf.id, error)
+                    }
+                }
             }
+            var errors: [(UUID, Error)] = []
+            for await (id, error) in group {
+                if let error { errors.append((id, error)) }
+            }
+            return errors
         }
-        return errors
     }
 
     // MARK: - Writing
@@ -201,6 +265,7 @@ public actor TaskRepository {
         try io.writeUTF8(newText, to: url)
         files[taskFileID] = working
         updateLastLoaded(for: taskFileID, hash: working.contentHash)
+        cache?.write(newText, for: taskFileID)
         emit(.fileSaved(taskFileID))
     }
 
