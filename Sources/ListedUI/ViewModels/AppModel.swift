@@ -218,8 +218,18 @@ public final class AppModel {
         return Array(Set(contexts)).sorted()
     }
 
+    /// Priorities that have at least one **active** (non-completed) task. Drives
+    /// the sidebar's Priorities section so it only lists priorities the user can
+    /// currently click into and see results for. Completed tasks' preserved
+    /// `pri:X` metadata is intentionally ignored here — those tasks are filtered
+    /// out of the per-priority view by `QueryEngine` anyway.
     public var usedPriorities: [Character] {
-        let priorities = loadedFiles.flatMap { $0.tasks.compactMap { $0.priority ?? $0.preservedPriority } }
+        let priorities = loadedFiles.flatMap { file in
+            file.tasks.compactMap { task -> Character? in
+                guard !task.isCompleted, let p = task.priority else { return nil }
+                return p
+            }
+        }
         return Array(Set(priorities)).sorted()
     }
 
