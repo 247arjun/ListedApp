@@ -72,12 +72,15 @@ struct AddTaskSheet: View {
 
     private var headerCard: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline, spacing: 12) {
+            // Use `.top` alignment + tuned padding rather than `.firstTextBaseline`,
+            // because the baseline guide collapses when the TextField is empty
+            // (no text → no baseline → the checkbox snaps to the top of the row).
+            HStack(alignment: .top, spacing: 12) {
                 Image(systemName: "square")
                     .symbolRenderingMode(.hierarchical)
                     .font(.title3)
                     .foregroundStyle(priority.map(DesignTokens.priorityColor) ?? .secondary)
-                    .alignmentGuide(.firstTextBaseline) { d in d[.bottom] - 4 }
+                    .padding(.top, 3)
 
                 TextField("Description", text: $description, axis: .vertical)
                     .font(.title3.weight(.semibold))

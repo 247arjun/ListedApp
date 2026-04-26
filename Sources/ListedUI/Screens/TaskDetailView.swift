@@ -46,13 +46,16 @@ public struct TaskDetailView: View {
             // Checkbox + title share one line. The TextField uses axis: .vertical
             // so it grows downward to wrap long titles, but the leading checkbox
             // stays anchored at the first text baseline of the field.
-            HStack(alignment: .firstTextBaseline, spacing: 12) {
+            // Use `.top` alignment + tuned padding rather than `.firstTextBaseline`,
+            // because the baseline guide collapses when the TextField is empty
+            // (no text → no baseline → the checkbox snaps to the top of the row).
+            HStack(alignment: .top, spacing: 12) {
                 CompletionToggle(
                     isCompleted: task.isCompleted,
                     tint: (task.priority ?? task.preservedPriority).map(DesignTokens.priorityColor) ?? .accentColor,
                     onToggle: { Task { await model.toggleCompletion(task) } }
                 )
-                .alignmentGuide(.firstTextBaseline) { d in d[.bottom] - 4 }
+                .padding(.top, 3)
 
                 TextField("Description", text: $description, axis: .vertical)
                     .font(.title3.weight(.semibold))

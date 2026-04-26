@@ -10,7 +10,7 @@ public enum DesignTokens {
 
     /// Priority letters offered in user-facing pickers, in canonical todo.txt
     /// order (A is highest). The `priorityColor(_:)` switch below covers each.
-    public static let pickerPriorities: [Character] = ["A", "B", "C", "D", "E", "F", "G", "H", "I"]
+    public static let pickerPriorities: [Character] = ["A", "B", "C", "D", "E", "F", "G", "H"]
 
     public static func priorityColor(_ priority: Character) -> Color {
         switch priority {
@@ -22,7 +22,6 @@ public enum DesignTokens {
         case "F": return .blue
         case "G": return .indigo
         case "H": return .purple
-        case "I": return .pink
         default: return .secondary
         }
     }
