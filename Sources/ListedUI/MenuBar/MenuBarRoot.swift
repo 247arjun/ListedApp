@@ -229,10 +229,6 @@ public struct MenuBarRoot: View {
             Menu {
                 Button("Open Listed") { openMainWindow() }
                 Divider()
-                Button("Settings\u{2026}") {
-                    openSettings()
-                }
-                Divider()
                 Button("Quit Listed") {
                     NSApplication.shared.terminate(nil)
                 }
@@ -295,16 +291,6 @@ public struct MenuBarRoot: View {
         // ensures the existing scene with id "main" is reused.
         NSApp.activate(ignoringOtherApps: true)
         openWindow(id: "main")
-    }
-
-    private func openSettings() {
-        NSApp.activate(ignoringOtherApps: true)
-        if #available(macOS 14, *) {
-            // macOS 14+ "Settings" scene; SwiftUI installs an action with this selector.
-            NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
-        } else {
-            NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
-        }
     }
 }
 #endif

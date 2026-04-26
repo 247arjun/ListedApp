@@ -1,6 +1,9 @@
 import SwiftUI
 import ListedCore
 import ListedUI
+#if canImport(AppKit)
+import AppKit
+#endif
 
 @main
 struct ListedApp: App {
@@ -10,6 +13,13 @@ struct ListedApp: App {
     /// cache (both in Application Support, both microsecond-fast). It deliberately
     /// does NOT touch iCloud Drive — that happens later via `startBackgroundRefresh`.
     @State private var model: AppModel = AppModel.makeForLaunchSynchronously()
+
+    /// macOS-only AppDelegate that keeps the process alive when the main window
+    /// closes (so the menu bar item stays available, Mail/Messages-style) and
+    /// re-opens the window when the user clicks the Dock icon.
+    #if os(macOS)
+    @NSApplicationDelegateAdaptor(ListedAppDelegate.self) private var appDelegate
+    #endif
 
     var body: some Scene {
         #if os(macOS)
@@ -112,3 +122,52 @@ extension Notification.Name {
     static let listedNewTaskRequested = Notification.Name("listed.newTaskRequested")
     static let listedToggleCompletionRequested = Notification.Name("listed.toggleCompletionRequested")
 }
+
+#if os(macOS)
+/// AppDelegate that gives Listed the standard "stays running with the menu bar"
+/// behavior on macOS. Closing the main window does NOT terminate the process
+/// when the menu bar item is enabled, mirroring how Mail / Messages / Music
+/// behave. Clicking the Dock icon re-opens the main window.
+final class ListedAppDelegate: NSObject, NSApplicationDelegate {
+
+    /// Keep the app alive on last-window-close when the menu bar accessory is on
+    /// (so the user still has a UI surface). When the menu bar is off, fall back
+    /// to AppKit's normal "quit when the last window closes" behavior so we
+    /// don't leave a hidden process running with no way to interact with it.
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        return !menuBarEnabledFromDisk()
+    }
+
+    /// When the user clicks the Dock icon (or the app is otherwise re-activated
+    /// without a visible window), re-open the main window. Returning `true`
+    /// tells AppKit it should restore Listed's previously-closed window;
+    /// SwiftUI's `Window(id: "main")` scene picks this up and re-creates the
+    /// content. We also forward `NSWorkspace.didActivateApplicationNotification`
+    /// so the menu bar refresh trigger continues to fire.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag {
+            // Walk the existing windows; if one is hidden/miniaturized, surface it.
+            for window in NSApp.windows where window.canBecomeMain {
+                window.makeKeyAndOrderFront(nil)
+                NSApp.activate(ignoringOtherApps: true)
+                return true
+            }
+        }
+        // Returning `true` tells AppKit to perform its default behavior, which
+        // for a SwiftUI `Window` scene is to re-create the window.
+        return true
+    }
+
+    /// Read the persisted `menuBarEnabled` setting straight from the workspace
+    /// JSON on disk. The delegate doesn't have a reference to the live AppModel,
+    /// but the workspace JSON is the source of truth and is microsecond-fast to
+    /// read. Defaults to `true` (matches `AppSettings.menuBarEnabled` default).
+    private func menuBarEnabledFromDisk() -> Bool {
+        let store = WorkspaceStore()
+        if let workspace = try? store.load() {
+            return workspace.settings.menuBarEnabled
+        }
+        return true
+    }
+}
+#endif
