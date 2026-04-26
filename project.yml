@@ -39,13 +39,15 @@ targets:
       - path: App/ListedApp
         excludes:
           - "Info.plist"
+          - "Info.macOS.plist"
+          - "Info.iOS.plist"
           - "*.entitlements"
-    info:
-      path: App/ListedApp/Info.plist
     settings:
       base:
         PRODUCT_NAME: Listed
         PRODUCT_BUNDLE_IDENTIFIER: app.listed.Listed
+        INFOPLIST_FILE: App/ListedApp/Info.macOS.plist
+        GENERATE_INFOPLIST_FILE: "NO"
         CODE_SIGN_ENTITLEMENTS: App/ListedApp/Listed.macOS.entitlements
         ENABLE_HARDENED_RUNTIME: "YES"
         COMBINE_HIDPI_IMAGES: "YES"
@@ -64,13 +66,15 @@ targets:
       - path: App/ListedApp
         excludes:
           - "Info.plist"
+          - "Info.macOS.plist"
+          - "Info.iOS.plist"
           - "*.entitlements"
-    info:
-      path: App/ListedApp/Info.plist
     settings:
       base:
         PRODUCT_NAME: Listed
         PRODUCT_BUNDLE_IDENTIFIER: app.listed.Listed
+        INFOPLIST_FILE: App/ListedApp/Info.iOS.plist
+        GENERATE_INFOPLIST_FILE: "NO"
         CODE_SIGN_ENTITLEMENTS: App/ListedApp/Listed.iOS.entitlements
         TARGETED_DEVICE_FAMILY: "1,2"
         SUPPORTS_MACCATALYST: "NO"
