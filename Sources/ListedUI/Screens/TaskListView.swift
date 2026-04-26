@@ -67,22 +67,50 @@ public struct TaskListView: View {
             if model.visibleTasks.isEmpty {
                 emptyState
             } else {
-                List(selection: Binding(
-                    get: { model.selectedTaskID },
-                    set: { model.selectedTaskID = $0 }
-                )) {
-                    ForEach(model.visibleTasks) { task in
-                        rowEntry(for: task)
-                    }
-                    .onMove(perform: handleMove)
-                }
-                #if os(macOS)
-                .listStyle(.inset)
-                #else
-                .listStyle(.plain)
-                #endif
+                listForCurrentPlatform
             }
         }
+    }
+
+    /// On iPhone (compact width) we **must not** pass a `selection:` binding to
+    /// `List`. Selection mode swallows `NavigationLink` taps — the chevron
+    /// highlights but the push never fires. Use a plain `List` there.
+    /// macOS / iPad-regular keep the selection-driven list because that's what
+    /// drives the third column of `NavigationSplitView`.
+    @ViewBuilder
+    private var listForCurrentPlatform: some View {
+        #if os(iOS)
+        if horizontalSizeClass == .compact {
+            List {
+                ForEach(model.visibleTasks) { task in
+                    rowEntry(for: task)
+                }
+                .onMove(perform: handleMove)
+            }
+            .listStyle(.plain)
+        } else {
+            selectionList
+        }
+        #else
+        selectionList
+        #endif
+    }
+
+    private var selectionList: some View {
+        List(selection: Binding(
+            get: { model.selectedTaskID },
+            set: { model.selectedTaskID = $0 }
+        )) {
+            ForEach(model.visibleTasks) { task in
+                rowEntry(for: task)
+            }
+            .onMove(perform: handleMove)
+        }
+        #if os(macOS)
+        .listStyle(.inset)
+        #else
+        .listStyle(.plain)
+        #endif
     }
 
     /// One list row. On iPhone (compact width) the row is wrapped in a

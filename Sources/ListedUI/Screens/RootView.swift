@@ -92,14 +92,20 @@ public struct RootView: View {
                         }
                     }
                 }
+                // Both destination registrations live at the NavigationStack
+                // root. Nesting `navigationDestination(for:)` *inside* another
+                // destination's closure is unreliable on iOS 26 — taps light
+                // up but don't push because SwiftUI fails to find the inner
+                // registration during the path resolution. Registering both
+                // at the same level avoids the issue.
                 .navigationDestination(for: SidebarSelection.self) { selection in
                     TaskListView()
                         .onAppear { model.selection = selection }
-                        .navigationDestination(for: TodoTaskID.self) { taskID in
-                            if let task = model.loadedFiles.flatMap(\.tasks).first(where: { $0.id == taskID }) {
-                                TaskDetailView(task: task)
-                            }
-                        }
+                }
+                .navigationDestination(for: TodoTaskID.self) { taskID in
+                    if let task = model.loadedFiles.flatMap(\.tasks).first(where: { $0.id == taskID }) {
+                        TaskDetailView(task: task)
+                    }
                 }
         }
     }
