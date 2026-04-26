@@ -14,6 +14,10 @@ public struct MenuBarRoot: View {
 
     @State private var newTaskText: String = ""
     @FocusState private var composerFocused: Bool
+    /// Which smart list the popover is currently showing. Defaults to Today on
+    /// every popover open; the footer pills let the user switch between Today,
+    /// Upcoming and All without leaving the menu bar.
+    @State private var scope: TaskQuery.SmartList = .today
 
     public init() {}
 
@@ -34,6 +38,8 @@ public struct MenuBarRoot: View {
             // remote edits show up without forcing the user to open the
             // main window first.
             model.startBackgroundRefresh()
+            // Always reset to Today when the popover re-opens.
+            scope = .today
             // Land focus on the composer for instant keyboard capture.
             composerFocused = true
         }
@@ -44,11 +50,13 @@ public struct MenuBarRoot: View {
     private var header: some View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
-                Text("Today")
+                Text(scopeTitle)
                     .font(.headline)
+                    .contentTransition(.opacity)
                 Text(headerSubtitle)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .contentTransition(.opacity)
             }
             Spacer()
             if model.isRefreshing {
@@ -69,17 +77,34 @@ public struct MenuBarRoot: View {
         .padding(.bottom, 10)
     }
 
-    private var headerSubtitle: String {
-        let count = todaysTasks.count
-        let overdue = todaysTasks.filter { task in
-            guard let due = task.dueDate else { return false }
-            return due < LocalDate.today()
-        }.count
-        if count == 0 { return "Nothing due today" }
-        if overdue == 0 {
-            return count == 1 ? "1 task due" : "\(count) tasks due"
+    private var scopeTitle: String {
+        switch scope {
+        case .today: return "Today"
+        case .upcoming: return "Upcoming"
+        case .all: return "All"
+        case .inbox: return "Inbox"
+        case .completed: return "Completed"
         }
-        return "\(count) due • \(overdue) overdue"
+    }
+
+    private var headerSubtitle: String {
+        let count = scopedTasks.count
+        switch scope {
+        case .today:
+            let overdue = scopedTasks.filter { task in
+                guard let due = task.dueDate else { return false }
+                return due < LocalDate.today()
+            }.count
+            if count == 0 { return "Nothing due today" }
+            if overdue == 0 {
+                return count == 1 ? "1 task due" : "\(count) tasks due"
+            }
+            return "\(count) due \u{2022} \(overdue) overdue"
+        case .upcoming:
+            return count == 1 ? "1 upcoming task" : "\(count) upcoming tasks"
+        case .all, .inbox, .completed:
+            return count == 1 ? "1 task" : "\(count) tasks"
+        }
     }
 
     // MARK: - Quick add
@@ -117,21 +142,26 @@ public struct MenuBarRoot: View {
 
     // MARK: - List
 
-    /// Today's + overdue tasks across **all enabled active files**, regardless of
-    /// what the main window's sidebar is currently showing.
-    private var todaysTasks: [TodoTask] {
-        let q = TaskQuery(scope: .smartList(.today), searchText: "", sort: .default, includeCompleted: false)
+    /// Tasks for the currently-selected `scope` across **all enabled active
+    /// files** — deliberately independent of the main window's sidebar.
+    private var scopedTasks: [TodoTask] {
+        let q = TaskQuery(
+            scope: .smartList(scope),
+            searchText: "",
+            sort: .default,
+            includeCompleted: scope == .completed
+        )
         return QueryEngine().run(query: q, files: model.loadedFiles, taskFiles: model.workspace.taskFiles)
     }
 
     private var taskList: some View {
         Group {
-            if todaysTasks.isEmpty {
+            if scopedTasks.isEmpty {
                 emptyState
             } else {
                 ScrollView {
                     LazyVStack(spacing: 0) {
-                        ForEach(todaysTasks) { task in
+                        ForEach(scopedTasks) { task in
                             MenuBarTaskRow(task: task)
                             Divider()
                                 .padding(.leading, 36)
@@ -145,12 +175,12 @@ public struct MenuBarRoot: View {
 
     private var emptyState: some View {
         VStack(spacing: 8) {
-            Image(systemName: "checkmark.seal.fill")
+            Image(systemName: emptyIcon)
                 .font(.largeTitle)
                 .foregroundStyle(.tint)
-            Text("All caught up")
+            Text(emptyTitle)
                 .font(.headline)
-            Text("Nothing due today.")
+            Text(emptyMessage)
                 .font(.callout)
                 .foregroundStyle(.secondary)
         }
@@ -158,18 +188,47 @@ public struct MenuBarRoot: View {
         .padding()
     }
 
+    private var emptyIcon: String {
+        switch scope {
+        case .today: return "checkmark.seal.fill"
+        case .upcoming: return "calendar"
+        case .all: return "tray"
+        case .inbox: return "tray"
+        case .completed: return "checkmark.circle.fill"
+        }
+    }
+
+    private var emptyTitle: String {
+        switch scope {
+        case .today: return "All caught up"
+        case .upcoming: return "Nothing upcoming"
+        case .all: return "No tasks yet"
+        case .inbox: return "Inbox empty"
+        case .completed: return "Nothing completed"
+        }
+    }
+
+    private var emptyMessage: String {
+        switch scope {
+        case .today: return "Nothing due today."
+        case .upcoming: return "No future due dates."
+        case .all: return "Add a task above to get started."
+        case .inbox: return "No untagged tasks."
+        case .completed: return "Completed tasks will appear here."
+        }
+    }
+
     // MARK: - Footer
 
     private var footer: some View {
-        HStack(spacing: 12) {
-            footerButton(label: "Upcoming", count: count(for: .upcoming)) {
-                openMainWindow(selecting: .smartList(.upcoming))
-            }
-            footerButton(label: "All", count: count(for: .all)) {
-                openMainWindow(selecting: .smartList(.all))
-            }
+        HStack(spacing: 6) {
+            scopePill(.today, label: "Today")
+            scopePill(.upcoming, label: "Upcoming")
+            scopePill(.all, label: "All")
             Spacer()
             Menu {
+                Button("Open Listed") { openMainWindow() }
+                Divider()
                 Button("Settings\u{2026}") {
                     openSettings()
                 }
@@ -187,25 +246,43 @@ public struct MenuBarRoot: View {
         .padding(.vertical, 10)
     }
 
-    private func footerButton(label: String, count: Int, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
+    /// One scope-switch pill in the footer. Active scope is highlighted with the
+    /// accent color; tapping switches the popover's `scope` state with a smooth
+    /// crossfade.
+    private func scopePill(_ kind: TaskQuery.SmartList, label: String) -> some View {
+        let isActive = scope == kind
+        let count = model.taskCount(for: .smartList(kind))
+        return Button {
+            withAnimation(.smooth(duration: 0.18)) {
+                scope = kind
+            }
+        } label: {
             HStack(spacing: 4) {
-                Text(label).font(.callout)
+                Text(label).font(.callout.weight(isActive ? .semibold : .regular))
                 if count > 0 {
                     Text("\(count)")
                         .font(.caption2.monospacedDigit())
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(isActive ? Color.white : Color.secondary)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1)
-                        .background(Capsule().fill(.secondary.opacity(0.15)))
+                        .background(
+                            Capsule().fill(
+                                isActive ? Color.accentColor : Color.secondary.opacity(0.15)
+                            )
+                        )
                 }
             }
+            .foregroundStyle(isActive ? Color.accentColor : Color.primary)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(
+                Capsule().fill(
+                    isActive ? Color.accentColor.opacity(0.12) : Color.clear
+                )
+            )
         }
-        .buttonStyle(.borderless)
-    }
-
-    private func count(for kind: TaskQuery.SmartList) -> Int {
-        model.taskCount(for: .smartList(kind))
+        .buttonStyle(.plain)
+        .help(label)
     }
 
     // MARK: - Window actions

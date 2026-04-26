@@ -4,6 +4,9 @@ import ListedCore
 /// The middle column of the macOS / iPad layout, and the primary screen on iPhone.
 public struct TaskListView: View {
     @Environment(AppModel.self) private var model
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    #endif
     @State private var newTaskText: String = ""
     @FocusState private var newTaskFieldFocused: Bool
 
@@ -69,27 +72,7 @@ public struct TaskListView: View {
                     set: { model.selectedTaskID = $0 }
                 )) {
                     ForEach(model.visibleTasks) { task in
-                        TaskRowView(task: task, showSourceBadge: showsSourceBadge)
-                            .tag(task.id)
-                            .listRowBackground(rowBackground(for: task))
-                            .swipeActions(edge: .leading) {
-                                Button {
-                                    Task { await model.toggleCompletion(task) }
-                                } label: {
-                                    Label(task.isCompleted ? "Reopen" : "Complete", systemImage: task.isCompleted ? "arrow.uturn.backward" : "checkmark")
-                                }
-                                .tint(.green)
-                            }
-                            .swipeActions(edge: .trailing) {
-                                Button(role: .destructive) {
-                                    Task { await model.delete(task) }
-                                } label: {
-                                    Label("Delete", systemImage: "trash")
-                                }
-                            }
-                            .contextMenu {
-                                rowContextMenu(for: task)
-                            }
+                        rowEntry(for: task)
                     }
                     .onMove(perform: handleMove)
                 }
@@ -99,6 +82,76 @@ public struct TaskListView: View {
                 .listStyle(.plain)
                 #endif
             }
+        }
+    }
+
+    /// One list row. On iPhone (compact width) the row is wrapped in a
+    /// `NavigationLink(value:)` so taps push to `TaskDetailView` via the
+    /// `navigationDestination(for: TodoTaskID.self)` registered in
+    /// `RootView.iPhoneRoot`. On macOS / iPad-regular the row uses
+    /// `.tag(task.id)` so `List(selection:)` drives the third column of the
+    /// `NavigationSplitView` instead.
+    @ViewBuilder
+    private func rowEntry(for task: TodoTask) -> some View {
+        #if os(iOS)
+        if horizontalSizeClass == .compact {
+            NavigationLink(value: task.id) {
+                TaskRowView(task: task, showSourceBadge: showsSourceBadge)
+            }
+            .listRowBackground(rowBackground(for: task))
+            .swipeActions(edge: .leading) {
+                completionSwipeButton(for: task)
+            }
+            .swipeActions(edge: .trailing) {
+                deleteSwipeButton(for: task)
+            }
+            .contextMenu {
+                rowContextMenu(for: task)
+            }
+        } else {
+            selectionRow(for: task)
+        }
+        #else
+        selectionRow(for: task)
+        #endif
+    }
+
+    /// Selection-driven row variant (no `NavigationLink` wrapper) used on macOS
+    /// and regular-width iPad.
+    private func selectionRow(for task: TodoTask) -> some View {
+        TaskRowView(task: task, showSourceBadge: showsSourceBadge)
+            .tag(task.id)
+            .listRowBackground(rowBackground(for: task))
+            .swipeActions(edge: .leading) {
+                completionSwipeButton(for: task)
+            }
+            .swipeActions(edge: .trailing) {
+                deleteSwipeButton(for: task)
+            }
+            .contextMenu {
+                rowContextMenu(for: task)
+            }
+    }
+
+    @ViewBuilder
+    private func completionSwipeButton(for task: TodoTask) -> some View {
+        Button {
+            Task { await model.toggleCompletion(task) }
+        } label: {
+            Label(
+                task.isCompleted ? "Reopen" : "Complete",
+                systemImage: task.isCompleted ? "arrow.uturn.backward" : "checkmark"
+            )
+        }
+        .tint(.green)
+    }
+
+    @ViewBuilder
+    private func deleteSwipeButton(for task: TodoTask) -> some View {
+        Button(role: .destructive) {
+            Task { await model.delete(task) }
+        } label: {
+            Label("Delete", systemImage: "trash")
         }
     }
 
