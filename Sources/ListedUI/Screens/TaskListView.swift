@@ -19,8 +19,18 @@ public struct TaskListView: View {
         .navigationTitle(navigationTitle)
         #if os(macOS)
         .navigationSubtitle(subtitle)
-        #endif
         .searchable(text: $bindable.searchText, prompt: "Search tasks, +project, @context, due:today")
+        #else
+        // On iPhone/iPad, dock the search field under the navigation title so the
+        // "Search" affordance lives at the top with the other navigation chrome
+        // (rather than at the bottom of the screen, which is reserved here for
+        // task creation).
+        .searchable(
+            text: $bindable.searchText,
+            placement: .navigationBarDrawer(displayMode: .always),
+            prompt: "Search tasks, +project, @context, due:today"
+        )
+        #endif
         .toolbar { toolbarItems }
     }
 

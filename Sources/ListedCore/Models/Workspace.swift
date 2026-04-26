@@ -139,6 +139,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
     public var showCompletedInLists: Bool
     public var showRawMetadataInRows: Bool
     public var priorityRowHighlight: Bool
+    public var menuBarEnabled: Bool
     public var deleteMode: DeleteMode
 
     public init(
@@ -149,6 +150,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         showCompletedInLists: Bool = false,
         showRawMetadataInRows: Bool = false,
         priorityRowHighlight: Bool = true,
+        menuBarEnabled: Bool = true,
         deleteMode: DeleteMode = .ask
     ) {
         self.addCreationDateToNewTasks = addCreationDateToNewTasks
@@ -158,6 +160,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         self.showCompletedInLists = showCompletedInLists
         self.showRawMetadataInRows = showRawMetadataInRows
         self.priorityRowHighlight = priorityRowHighlight
+        self.menuBarEnabled = menuBarEnabled
         self.deleteMode = deleteMode
     }
 

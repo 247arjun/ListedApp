@@ -27,6 +27,16 @@ struct ListedApp: App {
             SettingsView()
                 .environment(model)
         }
+
+        // Optional menu bar accessory. Visible by default; the user can turn it
+        // off via Settings → Appearance → "Show in menu bar". When disabled the
+        // entire scene disappears (the `.disabled(true)` would still show the
+        // icon greyed-out, which we don't want).
+        MenuBarExtra("Listed", systemImage: "checkmark.square.fill", isInserted: menuBarVisible) {
+            MenuBarRoot()
+                .environment(model)
+        }
+        .menuBarExtraStyle(.window)
         #else
         WindowGroup {
             ContentScene(model: model)
@@ -34,6 +44,24 @@ struct ListedApp: App {
         .commands { appCommands }
         #endif
     }
+
+    #if os(macOS)
+    /// Two-way binding for the `MenuBarExtra(isInserted:)` flag, sourced from the
+    /// workspace's `AppSettings.menuBarEnabled`. Updates persist through
+    /// `WorkspaceStore` so the choice survives app launches.
+    private var menuBarVisible: Binding<Bool> {
+        Binding(
+            get: { model.workspace.settings.menuBarEnabled },
+            set: { newValue in
+                var updated = model.workspace
+                updated.settings.menuBarEnabled = newValue
+                try? model.workspaceStore.save(updated)
+                model.replaceWorkspace(updated)
+                Task { await model.repository.updateWorkspace(updated) }
+            }
+        )
+    }
+    #endif
 
     @CommandsBuilder
     private var appCommands: some Commands {

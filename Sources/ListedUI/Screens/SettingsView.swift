@@ -95,6 +95,11 @@ public struct SettingsView: View {
         Section("Appearance") {
             Toggle("Highlight rows by priority", isOn: bind(\.settings.priorityRowHighlight))
             Toggle("Show raw metadata in rows", isOn: bind(\.settings.showRawMetadataInRows))
+            #if os(macOS)
+            Toggle(isOn: bind(\.settings.menuBarEnabled)) {
+                Label("Show in menu bar", systemImage: "checkmark.square.fill")
+            }
+            #endif
         }
     }
 
