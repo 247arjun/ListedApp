@@ -185,6 +185,11 @@ public struct AppSettings: Codable, Hashable, Sendable {
     public var showRawMetadataInRows: Bool
     public var priorityRowHighlight: Bool
     public var menuBarEnabled: Bool
+    /// Which smart list the macOS menu bar popover lands on each time it opens.
+    /// Defaults to `.today`. Restricted to the three scopes the popover surfaces
+    /// (Today / Upcoming / All) by the Settings picker; storing the full enum
+    /// keeps things flexible if we add more scopes later.
+    public var menuBarDefaultScope: TaskQuery.SmartList
     public var deleteMode: DeleteMode
 
     public init(
@@ -198,6 +203,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         showRawMetadataInRows: Bool = false,
         priorityRowHighlight: Bool = true,
         menuBarEnabled: Bool = true,
+        menuBarDefaultScope: TaskQuery.SmartList = .today,
         deleteMode: DeleteMode = .ask
     ) {
         self.addCreationDateToNewTasks = addCreationDateToNewTasks
@@ -210,6 +216,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         self.showRawMetadataInRows = showRawMetadataInRows
         self.priorityRowHighlight = priorityRowHighlight
         self.menuBarEnabled = menuBarEnabled
+        self.menuBarDefaultScope = menuBarDefaultScope
         self.deleteMode = deleteMode
     }
 

@@ -11,7 +11,7 @@ public struct TaskQuery: Hashable, Sendable {
         case priority(Character)
     }
 
-    public enum SmartList: String, Hashable, Sendable, CaseIterable {
+    public enum SmartList: String, Hashable, Sendable, CaseIterable, Codable {
         case today
         case upcoming
         case all

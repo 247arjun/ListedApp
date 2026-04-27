@@ -14,8 +14,9 @@ public struct MenuBarRoot: View {
 
     @State private var newTaskText: String = ""
     @FocusState private var composerFocused: Bool
-    /// Which smart list the popover is currently showing. Defaults to Today on
-    /// every popover open; the footer pills let the user switch between Today,
+    /// Which smart list the popover is currently showing. Reset to the
+    /// user's `menuBarDefaultScope` setting (Today by default) on every
+    /// popover open; the footer pills let them switch between Today,
     /// Upcoming and All without leaving the menu bar.
     @State private var scope: TaskQuery.SmartList = .today
 
@@ -38,8 +39,9 @@ public struct MenuBarRoot: View {
             // remote edits show up without forcing the user to open the
             // main window first.
             model.startBackgroundRefresh()
-            // Always reset to Today when the popover re-opens.
-            scope = .today
+            // Reset to the user-chosen default scope (Settings → Menu Bar →
+            // Default view) every time the popover re-opens.
+            scope = model.workspace.settings.menuBarDefaultScope
             // Land focus on the composer for instant keyboard capture.
             composerFocused = true
         }

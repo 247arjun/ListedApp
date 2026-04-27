@@ -103,6 +103,24 @@ public struct SettingsView: View {
             Toggle(isOn: bind(\.settings.menuBarEnabled)) {
                 Label("Show in menu bar", systemImage: "checkmark.square.fill")
             }
+            // Default scope the menu bar popover lands on each time it opens.
+            // Only meaningful when the menu bar is enabled, so we disable the
+            // picker otherwise rather than hiding it (avoids layout jump).
+            Picker("Menu bar default view", selection: Binding(
+                get: { model.workspace.settings.menuBarDefaultScope },
+                set: { newValue in
+                    var updated = model.workspace
+                    updated.settings.menuBarDefaultScope = newValue
+                    try? model.workspaceStore.save(updated)
+                    model.replaceWorkspace(updated)
+                    Task { await model.repository.updateWorkspace(updated) }
+                }
+            )) {
+                Text("Today").tag(TaskQuery.SmartList.today)
+                Text("Upcoming").tag(TaskQuery.SmartList.upcoming)
+                Text("All").tag(TaskQuery.SmartList.all)
+            }
+            .disabled(!model.workspace.settings.menuBarEnabled)
             #endif
         }
     }
