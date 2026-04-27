@@ -47,11 +47,12 @@ public struct Chip: View {
     private var background: some View {
         switch style {
         case .neutral:
-            Capsule().fill(.clear)
-                .glassEffect(.regular, in: Capsule())
+            // Flat capsule — no glass effect, no drop shadow. Glass-tinted chips
+            // looked nice in isolation but were dropping shadows under every
+            // pill in the row, which read as visual noise.
+            Capsule().fill(.thinMaterial)
         case .accent(let color):
-            Capsule().fill(.clear)
-                .glassEffect(.regular.tint(color.opacity(0.22)), in: Capsule())
+            Capsule().fill(color.opacity(0.18))
         }
     }
 }

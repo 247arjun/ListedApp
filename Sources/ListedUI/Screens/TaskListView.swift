@@ -112,7 +112,11 @@ public struct TaskListView: View {
             .onMove(perform: handleMove)
         }
         #if os(macOS)
-        .listStyle(.inset)
+        // `.inset` adds a small top gutter between the toolbar / title area and
+        // the first row that the row's tinted listRowBackground can't fill.
+        // `.plain` doesn't, so the priority tint reaches the very top of the
+        // scroll area while still respecting the window's horizontal padding.
+        .listStyle(.plain)
         #else
         .listStyle(.plain)
         #endif
@@ -131,6 +135,7 @@ public struct TaskListView: View {
             NavigationLink(value: task.id) {
                 TaskRowView(task: task, showSourceBadge: showsSourceBadge)
             }
+            .listRowInsets(EdgeInsets())
             .listRowBackground(rowBackground(for: task))
             .swipeActions(edge: .leading) {
                 completionSwipeButton(for: task)
@@ -154,6 +159,10 @@ public struct TaskListView: View {
     private func selectionRow(for task: TodoTask) -> some View {
         TaskRowView(task: task, showSourceBadge: showsSourceBadge)
             .tag(task.id)
+            // Zero the system row insets so the priority tint reaches the row's
+            // top and bottom edges — TaskRowView already supplies its own internal
+            // vertical padding for breathing room.
+            .listRowInsets(EdgeInsets())
             .listRowBackground(rowBackground(for: task))
             .swipeActions(edge: .leading) {
                 completionSwipeButton(for: task)
@@ -164,6 +173,19 @@ public struct TaskListView: View {
             .contextMenu {
                 rowContextMenu(for: task)
             }
+    }
+
+    /// Optional priority tint for the row background. `nil` means inherit the
+    /// system row color. Completed tasks never get a tint.
+    @ViewBuilder
+    private func rowBackground(for task: TodoTask) -> some View {
+        if model.workspace.settings.priorityRowHighlight,
+           let p = task.priority,
+           !task.isCompleted {
+            DesignTokens.priorityColor(p).opacity(0.10)
+        } else {
+            Color.clear
+        }
     }
 
     @ViewBuilder
@@ -233,22 +255,6 @@ public struct TaskListView: View {
 
         Task {
             await model.reorderBucket(in: movingTask.sourceFileID, taskIDs: bucketIDs)
-        }
-    }
-
-    /// Returns a tinted background for tasks that have an explicit priority,
-    /// or `nil` to inherit the system row color. We rely on `.listRowBackground`
-    /// (the SwiftUI-native way to color a List row) so selection, hover, and
-    /// platform chrome continue to work correctly.
-    @ViewBuilder
-    private func rowBackground(for task: TodoTask) -> some View {
-        if model.workspace.settings.priorityRowHighlight,
-           let priority = task.priority,
-           !task.isCompleted {
-            DesignTokens.priorityColor(priority)
-                .opacity(0.10)
-        } else {
-            Color.clear
         }
     }
 
