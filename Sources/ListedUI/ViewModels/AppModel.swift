@@ -203,6 +203,18 @@ public final class AppModel {
         workspace.defaultTaskFileID ?? workspace.taskFiles.first(where: { $0.role == .activeTodo && $0.isEnabled })?.id
     }
 
+    /// File new tasks should land in: the sidebar selection if it's a specific
+    /// active file, otherwise the workspace default. Used by the inline composer
+    /// AND by the AddTaskSheet (so platform shortcuts route to the same place).
+    public var composerTargetFileID: UUID? {
+        if case .file(let id) = selection,
+           let tf = taskFile(forTaskFileID: id),
+           tf.isEnabled, tf.role == .activeTodo {
+            return id
+        }
+        return defaultActiveFileID
+    }
+
     public func taskFile(forTaskFileID id: UUID) -> TaskFile? {
         workspace.taskFiles.first(where: { $0.id == id })
     }

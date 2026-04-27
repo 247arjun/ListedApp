@@ -1,13 +1,16 @@
-#if os(iOS)
 import SwiftUI
 import ListedCore
 
-/// iOS-only sheet presented from the toolbar `+` button. Mirrors the field set
-/// from `TaskDetailView` (title, due date, priority, source file, projects,
-/// contexts, raw line) but operates on a local **draft** — the task isn't
-/// written to disk until the user taps **Add**.
+/// Cross-platform sheet that builds a new task as a local **draft** — nothing
+/// is written to disk until the user taps **Add**. Same field set as
+/// `TaskDetailView` (title, due date, priority, source file, projects,
+/// contexts, raw line). Tapping Cancel discards the draft.
 ///
-/// Tapping Cancel discards the draft entirely.
+/// Presented from:
+///   - iOS: the toolbar `+` button, the Home Screen long-press "New Task" quick
+///     action, and the macOS Dock right-click "New Task" item (via the
+///     `listedNewTaskRequested` notification — see `RootView`).
+///   - macOS: the toolbar `+` button, ⌘N, and the Dock right-click menu.
 struct AddTaskSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
@@ -44,7 +47,9 @@ struct AddTaskSheet: View {
                 .padding(20)
             }
             .navigationTitle("New Task")
+            #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
@@ -261,7 +266,9 @@ struct AddTaskSheet: View {
                 .padding(8)
                 .background(RoundedRectangle(cornerRadius: 8).fill(.thinMaterial))
                 .autocorrectionDisabled()
+                #if os(iOS)
                 .textInputAutocapitalization(.never)
+                #endif
 
                 if rawLineOverride != nil {
                     HStack {
@@ -339,4 +346,3 @@ struct AddTaskSheet: View {
             .fill(.background.secondary)
     }
 }
-#endif

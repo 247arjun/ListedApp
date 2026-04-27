@@ -9,8 +9,6 @@ public struct TaskListView: View {
     #endif
     @State private var newTaskText: String = ""
     @FocusState private var newTaskFieldFocused: Bool
-    /// iOS-only: presents a sheet-based composer when the user taps the + button.
-    @State private var showAddSheet: Bool = false
 
     public init() {}
 
@@ -42,14 +40,6 @@ public struct TaskListView: View {
         )
         #endif
         .toolbar { toolbarItems }
-        #if os(iOS)
-        .sheet(isPresented: $showAddSheet) {
-            AddTaskSheet(targetFileID: composerTargetFileID)
-                .environment(model)
-                .presentationDetents([.large])
-                .presentationDragIndicator(.visible)
-        }
-        #endif
     }
 
     private var navigationTitle: String {
@@ -303,17 +293,11 @@ public struct TaskListView: View {
 
     // MARK: - Composer
 
-    /// File the inline composer should append to. When the user has a specific file
-    /// selected in the sidebar, new tasks land there; otherwise we fall back to the
-    /// workspace's default active file. Project / context / smart-list scopes don't
-    /// imply a specific file, so they keep the default.
+    /// File the inline composer should append to. Delegates to
+    /// `AppModel.composerTargetFileID` so the iOS toolbar `+`, the macOS Dock
+    /// menu, ⌘N and the inline composer all agree on the destination.
     private var composerTargetFileID: UUID? {
-        if case .file(let id) = model.selection,
-           let tf = model.taskFile(forTaskFileID: id),
-           tf.isEnabled, tf.role == .activeTodo {
-            return id
-        }
-        return model.defaultActiveFileID
+        model.composerTargetFileID
     }
 
     @ViewBuilder
@@ -405,13 +389,11 @@ public struct TaskListView: View {
             }
 
             Button {
-                #if os(iOS)
-                showAddSheet = true
-                #else
-                if composerTargetFileID != nil {
-                    newTaskFieldFocused = true
-                }
-                #endif
+                // Single entry point on both platforms: post the notification
+                // and let RootView present the AddTaskSheet. Same path as
+                // the macOS Dock right-click → "New Task" item and the iOS
+                // Home Screen long-press quick action.
+                NotificationCenter.default.post(name: .listedNewTaskRequested, object: nil)
             } label: {
                 Label("New Task", systemImage: "plus")
             }

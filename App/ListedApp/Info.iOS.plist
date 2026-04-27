@@ -35,6 +35,20 @@
         <true/>
     </dict>
 
+    <!-- Home Screen long-press quick actions. The "type" string is what the
+         scene delegate matches against to know which action was triggered. -->
+    <key>UIApplicationShortcutItems</key>
+    <array>
+        <dict>
+            <key>UIApplicationShortcutItemType</key>
+            <string>app.listed.Listed.NewTask</string>
+            <key>UIApplicationShortcutItemTitle</key>
+            <string>New Task</string>
+            <key>UIApplicationShortcutItemIconType</key>
+            <string>UIApplicationShortcutIconTypeAdd</string>
+        </dict>
+    </array>
+
     <!-- Files & document picker access -->
     <key>UIFileSharingEnabled</key>
     <true/>

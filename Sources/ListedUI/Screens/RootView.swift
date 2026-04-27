@@ -11,6 +11,12 @@ public struct RootView: View {
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var showOnboarding: Bool = false
     @State private var showSettings: Bool = false
+    /// Driven by `Notification.Name.listedNewTaskRequested` (posted by ⌘N on
+    /// macOS, the toolbar `+` button, the macOS Dock right-click menu, and the
+    /// iOS Home Screen long-press quick action). Lifting this state to
+    /// `RootView` means the sheet works regardless of which sub-screen the
+    /// user is on (sidebar, list, or detail).
+    @State private var showAddSheet: Bool = false
 
     public init() {}
 
@@ -37,10 +43,38 @@ public struct RootView: View {
             SettingsView()
                 .environment(model)
         }
+        .sheet(isPresented: $showAddSheet) {
+            AddTaskSheet(targetFileID: model.composerTargetFileID)
+                .environment(model)
+                #if os(iOS)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+                #else
+                .frame(minWidth: 520, minHeight: 600)
+                #endif
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .listedNewTaskRequested)) { _ in
+            // Don't stack on top of onboarding or settings — defer until they close.
+            guard !showOnboarding, !showSettings else { return }
+            showAddSheet = true
+        }
         .onAppear {
             if model.workspace.fileSources.isEmpty {
                 showOnboarding = true
             }
+            // Cold-launch via iOS Home Screen quick action: the AppDelegate
+            // captured the shortcut into a static stash before any view mounted.
+            // Drain it here.
+            #if os(iOS)
+            if PendingLaunchActions.consumeNewTaskRequest() {
+                // Tiny delay so the onboarding-check above wins if appropriate.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                    if !showOnboarding, !showSettings {
+                        showAddSheet = true
+                    }
+                }
+            }
+            #endif
         }
     }
 

@@ -4,6 +4,9 @@ import ListedUI
 #if canImport(AppKit)
 import AppKit
 #endif
+#if canImport(UIKit)
+import UIKit
+#endif
 
 @main
 struct ListedApp: App {
@@ -19,6 +22,13 @@ struct ListedApp: App {
     /// re-opens the window when the user clicks the Dock icon.
     #if os(macOS)
     @NSApplicationDelegateAdaptor(ListedAppDelegate.self) private var appDelegate
+    #endif
+
+    /// iOS-only AppDelegate that captures Home Screen quick-action launches
+    /// (long-press the Listed icon → "New Task") and routes them into a
+    /// notification the SwiftUI view tree can react to.
+    #if os(iOS)
+    @UIApplicationDelegateAdaptor(ListedIOSAppDelegate.self) private var iosAppDelegate
     #endif
 
     var body: some Scene {
@@ -118,11 +128,6 @@ private struct ContentScene: View {
     }
 }
 
-extension Notification.Name {
-    static let listedNewTaskRequested = Notification.Name("listed.newTaskRequested")
-    static let listedToggleCompletionRequested = Notification.Name("listed.toggleCompletionRequested")
-}
-
 #if os(macOS)
 /// AppDelegate that gives Listed the standard "stays running with the menu bar"
 /// behavior on macOS. Closing the main window does NOT terminate the process
@@ -168,6 +173,105 @@ final class ListedAppDelegate: NSObject, NSApplicationDelegate {
             return workspace.settings.menuBarEnabled
         }
         return true
+    }
+
+    // MARK: - Dock menu
+
+    /// Right-click on the Dock icon → shows our custom menu. Currently just
+    /// "New Task" — handles the same `listedNewTaskRequested` notification the
+    /// iOS Home Screen quick action uses, so both platforms route through one
+    /// SwiftUI sheet (`AddTaskSheet` presented by `RootView`).
+    func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
+        let menu = NSMenu()
+        let newTask = NSMenuItem(
+            title: "New Task",
+            action: #selector(handleDockNewTask),
+            keyEquivalent: ""
+        )
+        newTask.target = self
+        menu.addItem(newTask)
+        return menu
+    }
+
+    @objc private func handleDockNewTask() {
+        // Make sure there's a visible window; AppKit will route the sheet to it.
+        NSApp.activate(ignoringOtherApps: true)
+        var foundVisible = false
+        for window in NSApp.windows where window.canBecomeMain {
+            if !window.isVisible {
+                window.makeKeyAndOrderFront(nil)
+            }
+            foundVisible = true
+            break
+        }
+        if !foundVisible {
+            // No window exists yet (app was running window-less in the menu bar).
+            // Stash the request and let the SwiftUI scene drain it on first mount.
+            PendingLaunchActions.requestNewTaskOnLaunch()
+        }
+        NotificationCenter.default.post(name: .listedNewTaskRequested, object: nil)
+    }
+}
+#endif
+
+// MARK: - iOS quick actions
+
+#if os(iOS)
+/// Captures Home Screen long-press quick-action launches on iOS. Cold launches
+/// arrive in `application(_:didFinishLaunchingWithOptions:)`; warm launches go
+/// through the scene delegate's `windowScene(_:performActionFor:)`. Both paths
+/// post `.listedNewTaskRequested` so the SwiftUI view tree handles the rest.
+final class ListedIOSAppDelegate: NSObject, UIApplicationDelegate {
+
+    func application(
+        _ application: UIApplication,
+        didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
+    ) -> Bool {
+        if let item = launchOptions?[.shortcutItem] as? UIApplicationShortcutItem {
+            handleShortcut(item)
+        }
+        return true
+    }
+
+    /// Hand SwiftUI a custom `UISceneConfiguration` so the scene delegate below
+    /// receives `windowScene(_:performActionFor:)` callbacks. Without this,
+    /// scene-based apps don't get warm-launch shortcut delivery to the app
+    /// delegate at all.
+    func application(
+        _ application: UIApplication,
+        configurationForConnecting connectingSceneSession: UISceneSession,
+        options: UIScene.ConnectionOptions
+    ) -> UISceneConfiguration {
+        let config = UISceneConfiguration(name: nil, sessionRole: connectingSceneSession.role)
+        config.delegateClass = ListedSceneDelegate.self
+        return config
+    }
+
+    fileprivate func handleShortcut(_ item: UIApplicationShortcutItem) {
+        guard item.type == "app.listed.Listed.NewTask" else { return }
+        // Stash for cold launches (no view mounted yet); also fire the
+        // notification immediately for warm launches.
+        PendingLaunchActions.requestNewTaskOnLaunch()
+        NotificationCenter.default.post(name: .listedNewTaskRequested, object: nil)
+    }
+}
+
+/// Scene delegate that catches both cold-via-scene and warm-launch shortcuts.
+final class ListedSceneDelegate: NSObject, UIWindowSceneDelegate {
+
+    func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
+        if let item = connectionOptions.shortcutItem {
+            (UIApplication.shared.delegate as? ListedIOSAppDelegate)?.handleShortcut(item)
+        }
+    }
+
+    func windowScene(
+        _ windowScene: UIWindowScene,
+        performActionFor shortcutItem: UIApplicationShortcutItem,
+        completionHandler: @escaping (Bool) -> Void
+    ) {
+        (UIApplication.shared.delegate as? ListedIOSAppDelegate)?.handleShortcut(shortcutItem)
+        completionHandler(true)
     }
 }
 #endif
