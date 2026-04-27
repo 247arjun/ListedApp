@@ -80,6 +80,13 @@ targets:
         CODE_SIGN_ENTITLEMENTS: App/ListedApp/Listed.iOS.entitlements
         TARGETED_DEVICE_FAMILY: "1,2"
         SUPPORTS_MACCATALYST: "NO"
+        # Disable the iOS-on-Mac compatibility runtime ("Designed for iPad on
+        # Mac"). Without this, both the macOS bundle and the iOS bundle share
+        # the same bundle ID at the LaunchServices level, and macOS will
+        # arbitrarily launch one of them — usually the iPad one, with the
+        # "Designed for iPad" badge. Real iPad device support stays intact via
+        # TARGETED_DEVICE_FAMILY: "1,2" above.
+        SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: "NO"
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/Frameworks"
     dependencies:
       - package: Listed
