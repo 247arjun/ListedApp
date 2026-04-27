@@ -70,12 +70,12 @@ public struct SidebarView: View {
             }
         }
 
-        if !model.activeTaskFiles.isEmpty {
-            Section("Files") {
-                ForEach(model.activeTaskFiles) { file in
-                    NavigationLink(value: SidebarSelection.file(file.id)) {
-                        Label(file.displayName, systemImage: "doc.text")
-                            .badge(model.taskCount(for: .file(file.id)))
+        if !model.usedPriorities.isEmpty {
+            Section("Priorities") {
+                ForEach(model.usedPriorities, id: \.self) { priority in
+                    NavigationLink(value: SidebarSelection.priority(priority)) {
+                        Label("Priority " + String(priority), systemImage: "flag.fill")
+                            .foregroundStyle(DesignTokens.priorityColor(priority))
                     }
                 }
             }
@@ -85,7 +85,9 @@ public struct SidebarView: View {
             Section("Projects") {
                 ForEach(model.allProjects, id: \.self) { project in
                     NavigationLink(value: SidebarSelection.project(project)) {
-                        Label("+\(project)", systemImage: "number")
+                        // Sidebar shows the bare name; the leading `+` lives in
+                        // the on-disk todo.txt token but reads as noise here.
+                        Label(project, systemImage: "number")
                     }
                 }
             }
@@ -95,18 +97,19 @@ public struct SidebarView: View {
             Section("Contexts") {
                 ForEach(model.allContexts, id: \.self) { context in
                     NavigationLink(value: SidebarSelection.context(context)) {
-                        Label("@\(context)", systemImage: "at")
+                        // Same treatment as Projects above — drop the leading `@`.
+                        Label(context, systemImage: "at")
                     }
                 }
             }
         }
 
-        if !model.usedPriorities.isEmpty {
-            Section("Priorities") {
-                ForEach(model.usedPriorities, id: \.self) { priority in
-                    NavigationLink(value: SidebarSelection.priority(priority)) {
-                        Label("Priority " + String(priority), systemImage: "flag.fill")
-                            .foregroundStyle(DesignTokens.priorityColor(priority))
+        if !model.activeTaskFiles.isEmpty {
+            Section("Files") {
+                ForEach(model.activeTaskFiles) { file in
+                    NavigationLink(value: SidebarSelection.file(file.id)) {
+                        Label(file.displayName, systemImage: "doc.text")
+                            .badge(model.taskCount(for: .file(file.id)))
                     }
                 }
             }
