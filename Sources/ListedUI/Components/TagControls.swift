@@ -22,15 +22,19 @@ public struct TagPill: View {
             Button(action: onRemove) {
                 Image(systemName: "xmark.circle.fill")
                     .font(.caption2)
-                    .foregroundStyle(tint.opacity(0.7))
+                    .foregroundStyle(tint.opacity(0.55))
             }
             .buttonStyle(.plain)
             .help("Remove")
         }
         .padding(.leading, 10)
         .padding(.trailing, 6)
-        .padding(.vertical, 4)
-        .glassEffect(.regular.tint(tint.opacity(0.18)), in: Capsule())
+        .padding(.vertical, 5)
+        .background(
+            Capsule()
+                .fill(tint.opacity(0.1))
+                .overlay(Capsule().strokeBorder(tint.opacity(0.2), lineWidth: 0.5))
+        )
     }
 }
 

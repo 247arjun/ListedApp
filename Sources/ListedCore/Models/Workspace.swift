@@ -192,6 +192,18 @@ public struct AppSettings: Codable, Hashable, Sendable {
     public var menuBarDefaultScope: TaskQuery.SmartList
     public var deleteMode: DeleteMode
 
+    // MARK: - Reminders
+
+    /// Master switch. When false, all pending notifications are cancelled
+    /// and no new ones are scheduled.
+    public var remindersEnabled: Bool
+    /// Hour (0-23) and minute (0-59) to fire the reminder notification.
+    public var reminderHour: Int
+    public var reminderMinute: Int
+    /// How many days before the due date to fire the reminder.
+    /// 0 = day-of, 1 = day before, etc.
+    public var reminderDaysBefore: Int
+
     public init(
         addCreationDateToNewTasks: Bool = true,
         addUIDToNewTasks: Bool = true,
@@ -204,7 +216,11 @@ public struct AppSettings: Codable, Hashable, Sendable {
         priorityRowHighlight: Bool = true,
         menuBarEnabled: Bool = true,
         menuBarDefaultScope: TaskQuery.SmartList = .today,
-        deleteMode: DeleteMode = .ask
+        deleteMode: DeleteMode = .ask,
+        remindersEnabled: Bool = false,
+        reminderHour: Int = 9,
+        reminderMinute: Int = 0,
+        reminderDaysBefore: Int = 0
     ) {
         self.addCreationDateToNewTasks = addCreationDateToNewTasks
         self.addUIDToNewTasks = addUIDToNewTasks
@@ -218,6 +234,10 @@ public struct AppSettings: Codable, Hashable, Sendable {
         self.menuBarEnabled = menuBarEnabled
         self.menuBarDefaultScope = menuBarDefaultScope
         self.deleteMode = deleteMode
+        self.remindersEnabled = remindersEnabled
+        self.reminderHour = reminderHour
+        self.reminderMinute = reminderMinute
+        self.reminderDaysBefore = reminderDaysBefore
     }
 
     public static let `default` = AppSettings()

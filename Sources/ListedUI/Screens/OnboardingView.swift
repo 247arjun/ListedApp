@@ -1,103 +1,180 @@
 import SwiftUI
 import ListedCore
 
-/// First-launch onboarding asking whether the user wants to store tasks in iCloud Drive
-/// or locally on the device. Surfaces the spec's first-launch flow (section 6.2).
+/// First-launch onboarding — redesigned as the user's first "wow" moment with
+/// confident typography, ambient gradients, and tactile choice cards.
 public struct OnboardingView: View {
     @Environment(AppModel.self) private var model
     @Binding var isPresented: Bool
 
     @State private var working: Bool = false
     @State private var errorMessage: String?
+    @State private var appeared: Bool = false
 
     public init(isPresented: Binding<Bool>) {
         self._isPresented = isPresented
     }
 
     public var body: some View {
-        VStack(spacing: 24) {
-            VStack(spacing: 12) {
-                Image(systemName: "checklist")
-                    .font(.system(size: 48))
-                    .foregroundStyle(.tint)
-                Text("Welcome to Listed")
-                    .font(.largeTitle.bold())
-                Text("Your tasks are plain-text todo.txt files you fully own. Choose where Listed should keep them.")
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 24)
-            }
-            .padding(.top, 24)
+        ZStack {
+            // Ambient gradient background
+            LinearGradient(
+                colors: [
+                    DesignTokens.accent.opacity(0.08),
+                    Color.purple.opacity(0.04),
+                    Color.clear
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .ignoresSafeArea()
 
-            VStack(spacing: 12) {
-                Button {
-                    bootstrap(useICloud: true)
-                } label: {
-                    storageOption(
+            VStack(spacing: DesignTokens.spacingSection) {
+                Spacer()
+
+                // Hero: app icon + welcome text
+                VStack(spacing: DesignTokens.spacingLG) {
+                    Image(systemName: "checklist")
+                        .font(.system(size: 56))
+                        .foregroundStyle(
+                            LinearGradient(
+                                colors: [DesignTokens.accent, .blue],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .scaleEffect(appeared ? 1.0 : 0.5)
+                        .opacity(appeared ? 1.0 : 0)
+
+                    VStack(spacing: DesignTokens.spacingSM) {
+                        Text("Welcome to Listed")
+                            .font(.system(size: 32, weight: .bold))
+                            .opacity(appeared ? 1.0 : 0)
+                            .offset(y: appeared ? 0 : 10)
+
+                        Text("Your tasks are plain-text todo.txt files you fully own.\nChoose where Listed should keep them.")
+                            .font(.body)
+                            .multilineTextAlignment(.center)
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, DesignTokens.spacingXXL)
+                            .opacity(appeared ? 1.0 : 0)
+                            .offset(y: appeared ? 0 : 10)
+                    }
+                }
+
+                // Storage choice cards
+                VStack(spacing: DesignTokens.spacingMD) {
+                    storageCard(
                         title: "Use iCloud Drive",
                         subtitle: model.bootstrap.isICloudAvailable
                             ? "Sync tasks across all your Apple devices."
                             : "iCloud Drive isn't available right now.",
-                        icon: "icloud",
-                        recommended: model.bootstrap.isICloudAvailable
-                    )
-                }
-                .buttonStyle(.plain)
-                .disabled(!model.bootstrap.isICloudAvailable || working)
+                        icon: "icloud.fill",
+                        gradientColors: [.blue, .cyan],
+                        recommended: model.bootstrap.isICloudAvailable,
+                        disabled: !model.bootstrap.isICloudAvailable || working
+                    ) {
+                        bootstrap(useICloud: true)
+                    }
 
-                Button {
-                    bootstrap(useICloud: false)
-                } label: {
-                    storageOption(
+                    storageCard(
                         title: "Use Local Storage",
                         subtitle: "Keep tasks on this device only. You can change this later.",
-                        icon: "internaldrive",
-                        recommended: false
-                    )
-                }
-                .buttonStyle(.plain)
-                .disabled(working)
-            }
-            .padding(.horizontal, 24)
-
-            if let errorMessage {
-                Text(errorMessage)
-                    .font(.callout)
-                    .foregroundStyle(.red)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 32)
-            }
-
-            Spacer()
-        }
-        .frame(minWidth: 420, minHeight: 460)
-        .padding(20)
-        .interactiveDismissDisabled(true)
-    }
-
-    private func storageOption(title: String, subtitle: String, icon: String, recommended: Bool) -> some View {
-        HStack(spacing: 16) {
-            Image(systemName: icon)
-                .font(.title2)
-                .frame(width: 32)
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text(title).font(.headline)
-                    if recommended {
-                        Text("Recommended")
-                            .font(.caption2.weight(.semibold))
-                            .padding(.horizontal, 6).padding(.vertical, 2)
-                            .background(Capsule().fill(.tint.opacity(0.2)))
-                            .foregroundStyle(.tint)
+                        icon: "internaldrive.fill",
+                        gradientColors: [.gray, .secondary],
+                        recommended: false,
+                        disabled: working
+                    ) {
+                        bootstrap(useICloud: false)
                     }
                 }
-                Text(subtitle).font(.callout).foregroundStyle(.secondary)
+                .padding(.horizontal, DesignTokens.spacingXXL)
+                .opacity(appeared ? 1.0 : 0)
+                .offset(y: appeared ? 0 : 20)
+
+                if let errorMessage {
+                    Text(errorMessage)
+                        .font(.callout)
+                        .foregroundStyle(.red)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, DesignTokens.spacingSection)
+                }
+
+                Spacer()
             }
-            Spacer()
-            Image(systemName: "chevron.right").foregroundStyle(.secondary)
         }
-        .padding(16)
-        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .frame(minWidth: 440, minHeight: 520)
+        .padding(DesignTokens.spacingXL)
+        .interactiveDismissDisabled(true)
+        .onAppear {
+            withAnimation(.easeOut(duration: 0.6)) {
+                appeared = true
+            }
+        }
+    }
+
+    // MARK: - Storage choice card
+
+    private func storageCard(
+        title: String,
+        subtitle: String,
+        icon: String,
+        gradientColors: [Color],
+        recommended: Bool,
+        disabled: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: DesignTokens.spacingLG) {
+                // Tinted icon badge
+                Image(systemName: icon)
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 40, height: 40)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(
+                                LinearGradient(colors: gradientColors, startPoint: .topLeading, endPoint: .bottomTrailing)
+                            )
+                    )
+
+                VStack(alignment: .leading, spacing: DesignTokens.spacingXS) {
+                    HStack(spacing: DesignTokens.spacingSM) {
+                        Text(title)
+                            .font(.headline)
+                            .foregroundStyle(.primary)
+                        if recommended {
+                            Text("Recommended")
+                                .font(.caption2.weight(.semibold))
+                                .padding(.horizontal, 8).padding(.vertical, 3)
+                                .background(Capsule().fill(DesignTokens.accent.opacity(0.15)))
+                                .foregroundStyle(DesignTokens.accent)
+                        }
+                    }
+                    Text(subtitle)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(DesignTokens.spacingLG)
+            .background(
+                RoundedRectangle(cornerRadius: DesignTokens.cardCornerRadius, style: .continuous)
+                    .fill(.background.secondary)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: DesignTokens.cardCornerRadius, style: .continuous)
+                            .strokeBorder(.separator.opacity(0.3), lineWidth: 0.5)
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled)
+        .opacity(disabled ? 0.5 : 1.0)
     }
 
     private func bootstrap(useICloud: Bool) {

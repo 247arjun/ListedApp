@@ -3,21 +3,14 @@ import SwiftUI
 import ListedCore
 import AppKit
 
-/// Compact "Today + overdue" view shown from Listed's menu bar item.
-///
-/// The menu bar popover is a second view of the same `AppModel` that powers the
-/// main window — completing a task here is reflected in the main window
-/// instantly because both observe the same `@Observable` model.
+/// Compact menu bar popover — redesigned as a jewel box with tinted gradient header,
+/// prominent quick-add field, and sliding scope selector.
 public struct MenuBarRoot: View {
     @Environment(AppModel.self) private var model
     @Environment(\.openWindow) private var openWindow
 
     @State private var newTaskText: String = ""
     @FocusState private var composerFocused: Bool
-    /// Which smart list the popover is currently showing. Reset to the
-    /// user's `menuBarDefaultScope` setting (Today by default) on every
-    /// popover open; the footer pills let them switch between Today,
-    /// Upcoming and All without leaving the menu bar.
     @State private var scope: TaskQuery.SmartList = .today
 
     public init() {}
@@ -25,58 +18,59 @@ public struct MenuBarRoot: View {
     public var body: some View {
         VStack(spacing: 0) {
             header
-            Divider()
             quickAddRow
             Divider()
             taskList
             Divider()
             footer
         }
-        .frame(width: 360)
-        .frame(minHeight: 320, idealHeight: 480, maxHeight: 600)
+        .frame(width: 380)
+        .frame(minHeight: 340, idealHeight: 500, maxHeight: 620)
         .onAppear {
-            // Refresh in the background each time the popover opens so
-            // remote edits show up without forcing the user to open the
-            // main window first.
             model.startBackgroundRefresh()
-            // Reset to the user-chosen default scope (Settings → Menu Bar →
-            // Default view) every time the popover re-opens.
             scope = model.workspace.settings.menuBarDefaultScope
-            // Land focus on the composer for instant keyboard capture.
             composerFocused = true
         }
     }
 
-    // MARK: - Header
+    // MARK: - Tinted gradient header
 
     private var header: some View {
-        HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(scopeTitle)
-                    .font(.headline)
-                    .contentTransition(.opacity)
-                Text(headerSubtitle)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .contentTransition(.opacity)
+        let tint = DesignTokens.smartListColor(for: scope)
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .center) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(scopeTitle)
+                        .font(.title3.weight(.semibold))
+                        .contentTransition(.numericText())
+                    Text(headerSubtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .contentTransition(.numericText())
+                }
+                Spacer()
+                if model.isRefreshing {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+                Button { openMainWindow() } label: {
+                    Image(systemName: "macwindow")
+                        .imageScale(.medium)
+                }
+                .buttonStyle(.borderless)
+                .help("Open Listed")
             }
-            Spacer()
-            if model.isRefreshing {
-                ProgressView()
-                    .controlSize(.small)
-            }
-            Button {
-                openMainWindow()
-            } label: {
-                Image(systemName: "macwindow")
-                    .imageScale(.medium)
-            }
-            .buttonStyle(.borderless)
-            .help("Open Listed")
         }
-        .padding(.horizontal, 14)
-        .padding(.top, 14)
-        .padding(.bottom, 10)
+        .padding(.horizontal, 16)
+        .padding(.top, 16)
+        .padding(.bottom, 12)
+        .background(
+            LinearGradient(
+                colors: [tint.opacity(0.1), .clear],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        )
     }
 
     private var scopeTitle: String {
@@ -109,24 +103,29 @@ public struct MenuBarRoot: View {
         }
     }
 
-    // MARK: - Quick add
+    // MARK: - Prominent quick add
 
     private var quickAddRow: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 10) {
             Image(systemName: "plus.circle.fill")
-                .foregroundStyle(.tint)
+                .font(.title3)
+                .foregroundStyle(DesignTokens.accent)
+                .symbolRenderingMode(.hierarchical)
             TextField("Add a task\u{2026}", text: $newTaskText)
                 .textFieldStyle(.plain)
+                .font(.callout)
                 .focused($composerFocused)
                 .onSubmit { submit() }
             if !newTaskText.isEmpty {
                 Button("Add") { submit() }
                     .buttonStyle(.borderedProminent)
+                    .tint(DesignTokens.accent)
                     .controlSize(.small)
             }
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, 16)
         .padding(.vertical, 10)
+        .background(.bar)
     }
 
     private func submit() {
@@ -138,14 +137,11 @@ public struct MenuBarRoot: View {
             await model.addTask(description: trimmed, in: fileID, dueDate: dueDate)
         }
         newTaskText = ""
-        // Keep focus so the user can keep adding tasks rapid-fire.
         composerFocused = true
     }
 
-    // MARK: - List
+    // MARK: - Task list
 
-    /// Tasks for the currently-selected `scope` across **all enabled active
-    /// files** — deliberately independent of the main window's sidebar.
     private var scopedTasks: [TodoTask] {
         let q = TaskQuery(
             scope: .smartList(scope),
@@ -166,7 +162,7 @@ public struct MenuBarRoot: View {
                         ForEach(scopedTasks) { task in
                             MenuBarTaskRow(task: task)
                             Divider()
-                                .padding(.leading, 36)
+                                .padding(.leading, 40)
                         }
                     }
                 }
@@ -175,55 +171,40 @@ public struct MenuBarRoot: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
+    // MARK: - Contextual empty state
+
     private var emptyState: some View {
-        VStack(spacing: 8) {
-            Image(systemName: emptyIcon)
-                .font(.largeTitle)
-                .foregroundStyle(.tint)
-            Text(emptyTitle)
+        let selection = SidebarSelection.smartList(scope)
+        let icon = DesignTokens.emptyIcon(for: selection)
+        let title = DesignTokens.emptyTitle(for: selection)
+        let message = DesignTokens.emptySubtitle(for: selection)
+        let tint = DesignTokens.smartListColor(for: scope)
+
+        return VStack(spacing: DesignTokens.spacingMD) {
+            Image(systemName: icon)
+                .font(.system(size: 36))
+                .foregroundStyle(
+                    LinearGradient(
+                        colors: [tint, tint.opacity(0.5)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+            Text(title)
                 .font(.headline)
-            Text(emptyMessage)
+            Text(message)
                 .font(.callout)
                 .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding()
     }
 
-    private var emptyIcon: String {
-        switch scope {
-        case .today: return "checkmark.seal.fill"
-        case .upcoming: return "calendar"
-        case .all: return "tray"
-        case .inbox: return "tray"
-        case .completed: return "checkmark.circle.fill"
-        }
-    }
-
-    private var emptyTitle: String {
-        switch scope {
-        case .today: return "All caught up"
-        case .upcoming: return "Nothing upcoming"
-        case .all: return "No tasks yet"
-        case .inbox: return "Inbox empty"
-        case .completed: return "Nothing completed"
-        }
-    }
-
-    private var emptyMessage: String {
-        switch scope {
-        case .today: return "Nothing due today."
-        case .upcoming: return "No future due dates."
-        case .all: return "Add a task above to get started."
-        case .inbox: return "No untagged tasks."
-        case .completed: return "Completed tasks will appear here."
-        }
-    }
-
-    // MARK: - Footer
+    // MARK: - Footer with sliding scope selector
 
     private var footer: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 4) {
             scopePill(.today, label: "Today")
             scopePill(.upcoming, label: "Upcoming")
             scopePill(.all, label: "All")
@@ -236,6 +217,7 @@ public struct MenuBarRoot: View {
                 }
             } label: {
                 Image(systemName: "ellipsis.circle")
+                    .foregroundStyle(.secondary)
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
@@ -244,14 +226,12 @@ public struct MenuBarRoot: View {
         .padding(.vertical, 10)
     }
 
-    /// One scope-switch pill in the footer. Active scope is highlighted with the
-    /// accent color; tapping switches the popover's `scope` state with a smooth
-    /// crossfade.
     private func scopePill(_ kind: TaskQuery.SmartList, label: String) -> some View {
         let isActive = scope == kind
         let count = model.taskCount(for: .smartList(kind))
+        let tint = DesignTokens.smartListColor(for: kind)
         return Button {
-            withAnimation(.smooth(duration: 0.18)) {
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
                 scope = kind
             }
         } label: {
@@ -260,23 +240,20 @@ public struct MenuBarRoot: View {
                 if count > 0 {
                     Text("\(count)")
                         .font(.caption2.monospacedDigit())
-                        .foregroundStyle(isActive ? Color.white : Color.secondary)
+                        .foregroundStyle(isActive ? .white : .secondary)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1)
                         .background(
-                            Capsule().fill(
-                                isActive ? Color.accentColor : Color.secondary.opacity(0.15)
-                            )
+                            Capsule().fill(isActive ? tint : Color.secondary.opacity(0.12))
                         )
+                        .contentTransition(.numericText())
                 }
             }
-            .foregroundStyle(isActive ? Color.accentColor : Color.primary)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
+            .foregroundStyle(isActive ? tint : .primary)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
             .background(
-                Capsule().fill(
-                    isActive ? Color.accentColor.opacity(0.12) : Color.clear
-                )
+                Capsule().fill(isActive ? tint.opacity(0.12) : .clear)
             )
         }
         .buttonStyle(.plain)
@@ -289,8 +266,6 @@ public struct MenuBarRoot: View {
         if let selection {
             model.selection = selection
         }
-        // Activate the app and bring up the main window. Using `openWindow`
-        // ensures the existing scene with id "main" is reused.
         NSApp.activate(ignoringOtherApps: true)
         openWindow(id: "main")
     }

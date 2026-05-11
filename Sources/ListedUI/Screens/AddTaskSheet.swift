@@ -2,21 +2,12 @@ import SwiftUI
 import ListedCore
 
 /// Cross-platform sheet that builds a new task as a local **draft** — nothing
-/// is written to disk until the user taps **Add**. Same field set as
-/// `TaskDetailView` (title, due date, priority, source file, projects,
-/// contexts, raw line). Tapping Cancel discards the draft.
-///
-/// Presented from:
-///   - iOS: the toolbar `+` button, the Home Screen long-press "New Task" quick
-///     action, and the macOS Dock right-click "New Task" item (via the
-///     `listedNewTaskRequested` notification — see `RootView`).
-///   - macOS: the toolbar `+` button, ⌘N, and the Dock right-click menu.
+/// is written to disk until the user taps **Add**. Redesigned with the same
+/// flowing document style as TaskDetailView.
 struct AddTaskSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
 
-    /// File the parent screen wants to add to (sidebar selection or default).
-    /// The user can re-pick from the Source File menu before saving.
     let targetFileID: UUID?
 
     // MARK: - Draft state
@@ -28,9 +19,6 @@ struct AddTaskSheet: View {
     @State private var projects: [String] = []
     @State private var contexts: [String] = []
     @State private var rawLineExpanded: Bool = false
-    /// User-edited override for the raw line. `nil` means "compute from the
-    /// structured fields on commit". Once the user explicitly edits the raw
-    /// line we honor their text verbatim.
     @State private var rawLineOverride: String?
 
     @FocusState private var titleFocused: Bool
@@ -38,13 +26,33 @@ struct AddTaskSheet: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    headerCard
-                    fieldsCard
-                    metadataCard
-                    rawCard
+                VStack(alignment: .leading, spacing: 0) {
+                    headerSection
+                        .padding(.horizontal, DesignTokens.spacingXL)
+                        .padding(.top, DesignTokens.spacingXL)
+                        .padding(.bottom, DesignTokens.spacingLG)
+
+                    Divider()
+                        .padding(.horizontal, DesignTokens.spacingXL)
+
+                    fieldsSection
+                        .padding(.horizontal, DesignTokens.spacingXL)
+                        .padding(.vertical, DesignTokens.spacingLG)
+
+                    Divider()
+                        .padding(.horizontal, DesignTokens.spacingXL)
+
+                    metadataSection
+                        .padding(.horizontal, DesignTokens.spacingXL)
+                        .padding(.vertical, DesignTokens.spacingLG)
+
+                    Divider()
+                        .padding(.horizontal, DesignTokens.spacingXL)
+
+                    rawSection
+                        .padding(.horizontal, DesignTokens.spacingXL)
+                        .padding(.vertical, DesignTokens.spacingLG)
                 }
-                .padding(20)
             }
             .navigationTitle("New Task")
             #if os(iOS)
@@ -56,16 +64,14 @@ struct AddTaskSheet: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Add") { commit() }
+                        .tint(DesignTokens.accent)
                         .disabled(description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
             .onAppear {
-                // Default the source file selection to whatever the parent screen
-                // suggested (sidebar selection or workspace default).
                 if chosenFileID == nil {
                     chosenFileID = targetFileID ?? model.defaultActiveFileID
                 }
-                // Auto-focus the title field so the keyboard appears immediately.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                     titleFocused = true
                 }
@@ -73,30 +79,27 @@ struct AddTaskSheet: View {
         }
     }
 
-    // MARK: - Cards (mirror TaskDetailView)
+    // MARK: - Header
 
-    private var headerCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            // Use `.top` alignment + tuned padding rather than `.firstTextBaseline`,
-            // because the baseline guide collapses when the TextField is empty
-            // (no text → no baseline → the checkbox snaps to the top of the row).
-            HStack(alignment: .top, spacing: 12) {
-                Image(systemName: "square")
+    private var headerSection: some View {
+        VStack(alignment: .leading, spacing: DesignTokens.spacingMD) {
+            HStack(alignment: .top, spacing: DesignTokens.spacingMD) {
+                Image(systemName: "circle")
                     .symbolRenderingMode(.hierarchical)
                     .font(.title3)
                     .foregroundStyle(priority.map(DesignTokens.priorityColor) ?? .secondary)
-                    .padding(.top, 3)
+                    .padding(.top, 5)
 
-                TextField("Description", text: $description, axis: .vertical)
-                    .font(.title3.weight(.semibold))
+                TextField("What needs to be done?", text: $description, axis: .vertical)
+                    .font(.title2.weight(.semibold))
                     .textFieldStyle(.plain)
-                    .lineLimit(1...6)
+                    .lineLimit(1...8)
                     .focused($titleFocused)
                     .submitLabel(.done)
             }
 
             if dueDate != nil || priority != nil {
-                HStack(spacing: 6) {
+                HStack(spacing: DesignTokens.spacingSM) {
                     if let d = dueDate {
                         let local = LocalDate.from(d)
                         Chip(DesignTokens.dueLabel(for: local), systemImage: "calendar", style: .accent(DesignTokens.dueColor(for: local)))
@@ -106,35 +109,47 @@ struct AddTaskSheet: View {
                     }
                     Spacer(minLength: 0)
                 }
-                .padding(.leading, 28)
+                .padding(.leading, 32)
             }
         }
-        .padding(16)
-        .background(card)
     }
 
-    private var fieldsCard: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Fields").font(.headline)
+    // MARK: - Fields
+
+    private var fieldsSection: some View {
+        VStack(alignment: .leading, spacing: DesignTokens.spacingLG) {
+            Text("Fields")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
 
             HStack {
-                Text("Due date").frame(width: 110, alignment: .leading)
+                Label("Due date", systemImage: "calendar")
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 130, alignment: .leading)
                 Spacer()
                 if let due = dueDate {
                     DatePicker("", selection: Binding(get: { due }, set: { dueDate = $0 }), displayedComponents: .date)
                         .labelsHidden()
-                    Button("Clear") { dueDate = nil }
-                        .buttonStyle(.borderless)
-                } else {
-                    Button("Add due date") {
-                        dueDate = Date()
+                    Button { dueDate = nil } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.tertiary)
                     }
-                    .buttonStyle(.borderless)
+                    .buttonStyle(.plain)
+                } else {
+                    Button("Add due date") { dueDate = Date() }
+                        .buttonStyle(.borderless)
+                        .foregroundStyle(DesignTokens.accent)
                 }
             }
 
+            Divider()
+
             HStack {
-                Text("Priority").frame(width: 110, alignment: .leading)
+                Label("Priority", systemImage: "flag")
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 130, alignment: .leading)
                 Spacer()
                 Picker("", selection: Binding(
                     get: { priority.map(String.init) ?? "—" },
@@ -151,22 +166,28 @@ struct AddTaskSheet: View {
                 .pickerStyle(.menu)
             }
 
+            Divider()
+
             HStack {
-                Text("Source file").frame(width: 110, alignment: .leading)
+                Label("Source file", systemImage: "doc.text")
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 130, alignment: .leading)
                 Spacer()
                 Menu {
                     ForEach(model.activeTaskFiles) { file in
-                        Button(file.displayName) {
-                            chosenFileID = file.id
-                        }
+                        Button(file.displayName) { chosenFileID = file.id }
                     }
                 } label: {
-                    Text(currentFileLabel)
+                    HStack(spacing: 4) {
+                        Text(currentFileLabel)
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
                 }
             }
         }
-        .padding(16)
-        .background(card)
     }
 
     private var currentFileLabel: String {
@@ -175,8 +196,10 @@ struct AddTaskSheet: View {
         return model.displayName(forTaskFileID: id)
     }
 
-    private var metadataCard: some View {
-        VStack(alignment: .leading, spacing: 16) {
+    // MARK: - Metadata
+
+    private var metadataSection: some View {
+        VStack(alignment: .leading, spacing: DesignTokens.spacingLG) {
             tagSubsection(
                 title: "Projects",
                 icon: "number",
@@ -209,8 +232,6 @@ struct AddTaskSheet: View {
                 }
             )
         }
-        .padding(16)
-        .background(card)
     }
 
     @ViewBuilder
@@ -224,10 +245,11 @@ struct AddTaskSheet: View {
         add: @escaping (String) -> Void,
         remove: @escaping (String) -> Void
     ) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: DesignTokens.spacingSM) {
+            HStack(spacing: DesignTokens.spacingSM) {
                 Label(title, systemImage: icon)
-                    .font(.headline)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
                 Spacer()
                 AddTagButton(
                     title: "Add \(title.dropLast())",
@@ -241,7 +263,7 @@ struct AddTaskSheet: View {
             if values.isEmpty {
                 Text("Tap \(Image(systemName: "plus.circle")) to add.")
                     .font(.callout)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.tertiary)
             } else {
                 FlowLayoutCompat(spacing: 6) {
                     ForEach(values, id: \.self) { value in
@@ -254,8 +276,10 @@ struct AddTaskSheet: View {
         }
     }
 
-    private var rawCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
+    // MARK: - Raw line
+
+    private var rawSection: some View {
+        VStack(alignment: .leading, spacing: DesignTokens.spacingSM) {
             DisclosureGroup(isExpanded: $rawLineExpanded) {
                 TextEditor(text: Binding(
                     get: { rawLineOverride ?? composedRawLine() },
@@ -263,8 +287,15 @@ struct AddTaskSheet: View {
                 ))
                 .font(.body.monospaced())
                 .frame(minHeight: 80)
-                .padding(8)
-                .background(RoundedRectangle(cornerRadius: 8).fill(.thinMaterial))
+                .padding(DesignTokens.spacingMD)
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Color(.secondarySystemFill))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .strokeBorder(.separator.opacity(0.3), lineWidth: 0.5)
+                )
                 .autocorrectionDisabled()
                 #if os(iOS)
                 .textInputAutocapitalization(.never)
@@ -278,28 +309,24 @@ struct AddTaskSheet: View {
                         }
                         .buttonStyle(.borderless)
                         .font(.caption)
+                        .foregroundStyle(.secondary)
                     }
                 }
             } label: {
                 Label("Raw todo.txt line", systemImage: "chevron.left.forwardslash.chevron.right")
-                    .font(.headline)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
             }
         }
-        .padding(16)
-        .background(card)
     }
 
     // MARK: - Build & commit
 
-    /// Compose what the raw line *would* look like from the current structured
-    /// state, without committing anything.
     private func composedRawLine() -> String {
         guard let task = buildDraftTask() else { return "" }
         return task.rawLine
     }
 
-    /// Build a draft `TodoTask` from the current state. Returns `nil` if the
-    /// description is empty.
     private func buildDraftTask() -> TodoTask? {
         let trimmed = description.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
@@ -324,7 +351,6 @@ struct AddTaskSheet: View {
         let fileID = chosenFileID ?? targetFileID ?? model.defaultActiveFileID
         guard let fileID else { return }
 
-        // If the user edited the raw line, that text wins verbatim.
         if let raw = rawLineOverride?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty {
             let parsed = TodoTxtParser().parse(line: raw, lineNumber: 0, sourceFileID: fileID)
             Task {
@@ -339,10 +365,5 @@ struct AddTaskSheet: View {
             await model.appendPreparedTask(task, to: fileID)
         }
         dismiss()
-    }
-
-    private var card: some View {
-        RoundedRectangle(cornerRadius: 16, style: .continuous)
-            .fill(.background.secondary)
     }
 }

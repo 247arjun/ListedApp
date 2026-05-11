@@ -55,6 +55,16 @@
     <key>LSSupportsOpeningDocumentsInPlace</key>
     <true/>
 
+    <!-- Background App Refresh for iCloud sync + notification scheduling -->
+    <key>UIBackgroundModes</key>
+    <array>
+        <string>fetch</string>
+    </array>
+    <key>BGTaskSchedulerPermittedIdentifiers</key>
+    <array>
+        <string>app.listed.refresh</string>
+    </array>
+
     <!-- Supported orientations -->
     <key>UISupportedInterfaceOrientations</key>
     <array>

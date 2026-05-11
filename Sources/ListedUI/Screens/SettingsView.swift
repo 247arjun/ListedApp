@@ -1,6 +1,7 @@
 import SwiftUI
 import ListedCore
 import UniformTypeIdentifiers
+import UserNotifications
 #if canImport(AppKit)
 import AppKit
 #endif
@@ -15,6 +16,7 @@ public struct SettingsView: View {
     @State private var showPurgeConfirmation: Bool = false
     @State private var purgeResultMessage: String?
     @State private var purgeResultIsError: Bool = false
+    @State private var notificationPermissionDenied: Bool = false
 
     public init() {}
 
@@ -47,6 +49,7 @@ public struct SettingsView: View {
             storageSection
             filesSection
             appearanceSection
+            remindersSection
             completedSection
             behaviorSection
         }
@@ -135,6 +138,119 @@ public struct SettingsView: View {
         }
     }
 
+    // MARK: - Reminders
+
+    private var remindersSection: some View {
+        Section {
+            Toggle("Enable due date reminders", isOn: remindersEnabledBinding)
+
+            if model.workspace.settings.remindersEnabled {
+                DatePicker(
+                    "Reminder time",
+                    selection: reminderTimeBinding,
+                    displayedComponents: .hourAndMinute
+                )
+
+                Picker("When to remind", selection: reminderDaysBeforeBinding) {
+                    Text("On the due date").tag(0)
+                    Text("1 day before").tag(1)
+                    Text("2 days before").tag(2)
+                    Text("3 days before").tag(3)
+                }
+            }
+        } header: {
+            Text("Reminders")
+        } footer: {
+            if model.workspace.settings.remindersEnabled {
+                Text("Notifications fire at the chosen time for every task with a due date. Reminders sync automatically when tasks change via iCloud or external editors.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .alert("Notifications Disabled", isPresented: $notificationPermissionDenied) {
+            Button("Open Settings") {
+                #if os(iOS)
+                if let url = URL(string: UIApplication.openSettingsURLString) {
+                    UIApplication.shared.open(url)
+                }
+                #endif
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Listed needs notification permission to send due date reminders. Please enable notifications in Settings.")
+        }
+    }
+
+    /// Binding for the reminders toggle that requests notification permission
+    /// when first enabled.
+    private var remindersEnabledBinding: Binding<Bool> {
+        Binding(
+            get: { model.workspace.settings.remindersEnabled },
+            set: { newValue in
+                if newValue {
+                    // Request permission before enabling
+                    Task {
+                        let granted = await model.reminderScheduler.requestPermissionIfNeeded()
+                        await MainActor.run {
+                            if granted {
+                                updateSettings { $0.settings.remindersEnabled = true }
+                                Task { await model.syncReminders() }
+                            } else {
+                                notificationPermissionDenied = true
+                            }
+                        }
+                    }
+                } else {
+                    updateSettings { $0.settings.remindersEnabled = false }
+                    Task { await model.syncReminders() }
+                }
+            }
+        )
+    }
+
+    /// Binding that converts the stored hour/minute ints to/from a Date
+    /// for use with DatePicker.
+    private var reminderTimeBinding: Binding<Date> {
+        Binding(
+            get: {
+                var components = DateComponents()
+                components.hour = model.workspace.settings.reminderHour
+                components.minute = model.workspace.settings.reminderMinute
+                return Calendar.current.date(from: components) ?? Date()
+            },
+            set: { newDate in
+                let calendar = Calendar.current
+                let hour = calendar.component(.hour, from: newDate)
+                let minute = calendar.component(.minute, from: newDate)
+                updateSettings {
+                    $0.settings.reminderHour = hour
+                    $0.settings.reminderMinute = minute
+                }
+                Task { await model.syncReminders() }
+            }
+        )
+    }
+
+    /// Binding for the "days before" picker.
+    private var reminderDaysBeforeBinding: Binding<Int> {
+        Binding(
+            get: { model.workspace.settings.reminderDaysBefore },
+            set: { newValue in
+                updateSettings { $0.settings.reminderDaysBefore = newValue }
+                Task { await model.syncReminders() }
+            }
+        )
+    }
+
+    /// Helper that updates workspace settings, persists, and propagates.
+    private func updateSettings(_ mutation: (inout Workspace) -> Void) {
+        var updated = model.workspace
+        mutation(&updated)
+        try? model.workspaceStore.save(updated)
+        model.replaceWorkspace(updated)
+        Task { await model.repository.updateWorkspace(updated) }
+    }
+
     /// Single-file completion model: instead of moving completed tasks to a
     /// separate `done.txt`, Listed keeps them at the bottom of the active file
     /// and offers an opt-in schedule for hard-deleting them.
@@ -212,8 +328,13 @@ public struct SettingsView: View {
     private func sourceRow(_ source: FileSource) -> some View {
         HStack(spacing: 12) {
             Image(systemName: icon(for: source.kind))
-                .foregroundStyle(.tint)
-                .frame(width: 24)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.white)
+                .frame(width: DesignTokens.sidebarIconSize, height: DesignTokens.sidebarIconSize)
+                .background(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(sourceColor(for: source.kind).gradient)
+                )
             VStack(alignment: .leading, spacing: 2) {
                 Text(source.displayName).font(.body)
                 Text(label(for: source.kind))
@@ -223,9 +344,10 @@ public struct SettingsView: View {
             Spacer()
             if source.isDefault {
                 Text("Default")
-                    .font(.caption)
-                    .padding(.horizontal, 8).padding(.vertical, 2)
-                    .background(Capsule().fill(.tint.opacity(0.15)))
+                    .font(.caption.weight(.medium))
+                    .padding(.horizontal, 8).padding(.vertical, 3)
+                    .background(Capsule().fill(DesignTokens.accent.opacity(0.12)))
+                    .foregroundStyle(DesignTokens.accent)
             }
         }
         .padding(.vertical, 2)
@@ -233,9 +355,14 @@ public struct SettingsView: View {
 
     private func fileRow(_ file: TaskFile) -> some View {
         HStack(spacing: 12) {
-            Image(systemName: file.role == .completedArchive ? "tray.full" : "doc.text")
-                .foregroundStyle(.tint)
-                .frame(width: 24)
+            Image(systemName: file.role == .completedArchive ? "tray.full.fill" : "doc.text.fill")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.white)
+                .frame(width: DesignTokens.sidebarIconSize, height: DesignTokens.sidebarIconSize)
+                .background(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(Color.gray.gradient)
+                )
             VStack(alignment: .leading, spacing: 2) {
                 Text(file.displayName)
                 Text(file.role.rawValue.capitalized)
@@ -245,15 +372,17 @@ public struct SettingsView: View {
             Spacer()
             if file.id == model.workspace.defaultTaskFileID {
                 Text("Default")
-                    .font(.caption)
-                    .padding(.horizontal, 8).padding(.vertical, 2)
-                    .background(Capsule().fill(.tint.opacity(0.15)))
+                    .font(.caption.weight(.medium))
+                    .padding(.horizontal, 8).padding(.vertical, 3)
+                    .background(Capsule().fill(DesignTokens.accent.opacity(0.12)))
+                    .foregroundStyle(DesignTokens.accent)
             } else if file.role == .activeTodo {
                 Button("Make default") {
                     Task { await model.setDefaultFile(file.id) }
                 }
                 .buttonStyle(.borderless)
                 .font(.caption)
+                .foregroundStyle(DesignTokens.accent)
             }
         }
         .padding(.vertical, 2)
@@ -274,6 +403,15 @@ public struct SettingsView: View {
         case .appLocalContainer: return "On this device"
         case .securityScopedFile: return "External file"
         case .securityScopedFolder: return "External folder"
+        }
+    }
+
+    private func sourceColor(for kind: FileSourceKind) -> Color {
+        switch kind {
+        case .appICloudContainer: return .blue
+        case .appLocalContainer: return .gray
+        case .securityScopedFile: return .orange
+        case .securityScopedFolder: return .purple
         }
     }
 

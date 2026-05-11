@@ -58,6 +58,19 @@ public struct RootView: View {
             guard !showOnboarding, !showSettings else { return }
             showAddSheet = true
         }
+        .onReceive(NotificationCenter.default.publisher(for: .listedNotificationTapped)) { notification in
+            // Deep-link from a tapped reminder notification: find the task by
+            // matching the raw line and source file, then select it.
+            guard let userInfo = notification.userInfo,
+                  let rawLine = userInfo["taskRawLine"] as? String,
+                  let sourceFileString = userInfo["sourceFileID"] as? String,
+                  let sourceFileID = UUID(uuidString: sourceFileString) else { return }
+            if let task = model.loadedFiles.flatMap(\.tasks).first(where: {
+                $0.rawLine == rawLine && $0.sourceFileID == sourceFileID
+            }) {
+                model.selectedTaskID = task.id
+            }
+        }
         .onAppear {
             if model.workspace.fileSources.isEmpty {
                 showOnboarding = true
@@ -94,31 +107,55 @@ public struct RootView: View {
 
     private var splitRoot: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
-            SidebarView()
+            SidebarView(usesPushNavigation: false)
+                #if os(iOS)
+                // Attach the Settings button to the **sidebar's** toolbar so it
+                // shows up in iPad's leftmost column navigation bar. Placing the
+                // toolbar on `NavigationSplitView` itself (via `.automatic`) is
+                // unreliable on iPad — the button gets hidden when columns
+                // collapse. macOS uses the native `Settings` scene + ⌘, so it
+                // doesn't need this toolbar entry.
+                .toolbar {
+                    ToolbarItem(placement: .primaryAction) {
+                        Button { showSettings = true } label: {
+                            Image(systemName: "gearshape")
+                        }
+                        .accessibilityLabel("Settings")
+                    }
+                }
+                #endif
         } content: {
-            TaskListView()
+            TaskListView(usesPushNavigation: false)
         } detail: {
             if let task = model.selectedTask {
                 TaskDetailView(task: task)
             } else {
-                ContentUnavailableView("No task selected", systemImage: "square.text.square", description: Text("Select a task to see its details."))
-            }
-        }
-        .toolbar {
-            ToolbarItem(placement: .automatic) {
-                Button {
-                    showSettings = true
-                } label: {
-                    Label("Settings", systemImage: "gearshape")
+                // Beautiful empty detail pane
+                VStack(spacing: DesignTokens.spacingLG) {
+                    Image(systemName: "square.text.square")
+                        .font(.system(size: 48))
+                        .foregroundStyle(
+                            LinearGradient(
+                                colors: [DesignTokens.accent.opacity(0.6), DesignTokens.accent.opacity(0.3)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                    VStack(spacing: DesignTokens.spacingSM) {
+                        Text("No task selected")
+                            .font(.title3.weight(.medium))
+                        Text("Select a task to see its details.")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
                 }
-                .keyboardShortcut(",", modifiers: .command)
             }
         }
     }
 
     private var iPhoneRoot: some View {
         NavigationStack {
-            SidebarView()
+            SidebarView(usesPushNavigation: true)
                 .toolbar {
                     ToolbarItem(placement: .primaryAction) {
                         Button { showSettings = true } label: {
@@ -133,7 +170,7 @@ public struct RootView: View {
                 // registration during the path resolution. Registering both
                 // at the same level avoids the issue.
                 .navigationDestination(for: SidebarSelection.self) { selection in
-                    TaskListView()
+                    TaskListView(usesPushNavigation: true)
                         .onAppear { model.selection = selection }
                 }
                 .navigationDestination(for: TodoTaskID.self) { taskID in

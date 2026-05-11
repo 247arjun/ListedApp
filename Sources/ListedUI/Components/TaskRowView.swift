@@ -1,7 +1,8 @@
 import SwiftUI
 import ListedCore
 
-/// One row in the main task list.
+/// One row in the main task list, rendered as a floating card with a left-edge
+/// priority color bar for at-a-glance scanning.
 public struct TaskRowView: View {
     @Environment(AppModel.self) private var model
 
@@ -15,72 +16,67 @@ public struct TaskRowView: View {
     }
 
     public var body: some View {
-        // Single horizontal lane: checkbox · priority badge · title · chips · due chip.
-        // Putting everything on one baseline means title-only rows and chip-bearing
-        // rows align consistently and the row's height is purely determined by the
-        // tallest element in the lane.
-        HStack(alignment: .center, spacing: 12) {
-            CompletionToggle(
-                isCompleted: task.isCompleted,
-                tint: task.priority.map(DesignTokens.priorityColor) ?? .accentColor,
-                onToggle: { Task { await model.toggleCompletion(task) } }
-            )
-
-            if let priority = task.priority {
-                Text(String(priority))
-                    .font(.caption.bold())
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 1)
-                    .background(
-                        Capsule().fill(DesignTokens.priorityColor(priority).opacity(0.15))
-                    )
-                    .foregroundStyle(DesignTokens.priorityColor(priority))
+        HStack(spacing: 0) {
+            // Left-edge priority color bar — visible at peripheral-vision level.
+            // Only shown for active tasks with a priority.
+            if let priority = task.priority, !task.isCompleted {
+                RoundedRectangle(cornerRadius: 1.5)
+                    .fill(DesignTokens.priorityColor(priority))
+                    .frame(width: DesignTokens.priorityBarWidth)
+                    .padding(.vertical, 6)
+                    .padding(.trailing, 10)
             }
 
-            Text(rowTitle.isEmpty ? "Untitled task" : rowTitle)
-                .font(.body)
-                .strikethrough(task.isCompleted, color: .secondary)
-                .foregroundStyle(task.isCompleted ? .secondary : .primary)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .layoutPriority(1)
+            // Main content lane
+            HStack(alignment: .center, spacing: DesignTokens.spacingMD) {
+                CompletionToggle(
+                    isCompleted: task.isCompleted,
+                    tint: task.priority.map(DesignTokens.priorityColor) ?? DesignTokens.accent,
+                    onToggle: { Task { await model.toggleCompletion(task) } }
+                )
 
-            // Chips appear immediately after the title, on the same line.
-            if !chips.isEmpty {
-                HStack(spacing: 6) {
-                    ForEach(chips, id: \.self) { chip in
-                        chip.view
+                VStack(alignment: .leading, spacing: DesignTokens.spacingXS) {
+                    Text(rowTitle.isEmpty ? "Untitled task" : rowTitle)
+                        .font(.body.weight(task.isCompleted ? .regular : .medium))
+                        .strikethrough(task.isCompleted, color: .secondary)
+                        .foregroundStyle(task.isCompleted ? .secondary : .primary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+
+                    // Chips row below the title for cleaner hierarchy
+                    if !chips.isEmpty || showSourceBadge {
+                        HStack(spacing: 6) {
+                            ForEach(chips, id: \.self) { chip in
+                                chip.view
+                            }
+                            if showSourceBadge {
+                                Text(model.displayName(forTaskFileID: task.sourceFileID))
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+                            }
+                        }
                     }
                 }
-                .layoutPriority(0)
-            }
+                .layoutPriority(1)
 
-            if showSourceBadge {
-                Text(model.displayName(forTaskFileID: task.sourceFileID))
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
+                Spacer(minLength: 6)
 
-            Spacer(minLength: 8)
-
-            if let due = task.dueDate {
-                dueChip(due)
-            } else if let warning = task.parseWarnings.first {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.yellow)
-                    .help(warning.message)
+                // Trailing: due chip or warning
+                if let due = task.dueDate {
+                    dueChip(due)
+                } else if let warning = task.parseWarnings.first {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.yellow)
+                        .help(warning.message)
+                }
             }
         }
-        .padding(.vertical, 8)
-        // The hosting List used to add its own horizontal inset; now that the
-        // row owns its full edges (so the priority tint reaches them), pad the
-        // content in instead so chips and titles don't hug the row's edges.
-        .padding(.horizontal, 16)
-        // Force every row to the same minimum height so a title-only row sits
-        // as tall as a row with chips on the same line.
-        .frame(minHeight: 44, alignment: .leading)
+        .padding(.vertical, 10)
+        .padding(.leading, task.priority != nil && !task.isCompleted ? 8 : DesignTokens.spacingLG)
+        .padding(.trailing, DesignTokens.spacingLG)
+        .frame(minHeight: 50, alignment: .leading)
         .contentShape(Rectangle())
+        .opacity(task.isCompleted ? 0.6 : 1.0)
     }
 
     /// Honors the "Show raw metadata in rows" Appearance toggle. When off (default)
@@ -107,10 +103,12 @@ public struct TaskRowView: View {
     private var chips: [ChipDescriptor] {
         var result: [ChipDescriptor] = []
         for project in task.projects {
+            // Projects: filled accent chip
             result.append(.init(id: "p:\(project)", view: AnyView(Chip("+\(project)", style: .accent(.blue)))))
         }
         for context in task.contexts {
-            result.append(.init(id: "c:\(context)", view: AnyView(Chip("@\(context)", style: .accent(.purple)))))
+            // Contexts: outlined chip — visually distinct from projects
+            result.append(.init(id: "c:\(context)", view: AnyView(Chip("@\(context)", style: .outlined(.purple)))))
         }
         return result
     }
@@ -118,6 +116,9 @@ public struct TaskRowView: View {
     private func dueChip(_ date: LocalDate) -> some View {
         let label = DesignTokens.dueLabel(for: date)
         let color = DesignTokens.dueColor(for: date)
-        return Chip(label, systemImage: "calendar", style: .accent(color))
+        let today = LocalDate.today()
+        // Overdue tasks get a bold filled chip for urgency
+        let style: Chip.Style = date < today ? .filled(color) : .accent(color)
+        return Chip(label, systemImage: "calendar", style: style)
     }
 }

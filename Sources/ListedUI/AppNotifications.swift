@@ -11,4 +11,8 @@ public extension Notification.Name {
     /// Posted when the user invokes the "Toggle Completion" command (⌘↩ on macOS).
     /// Currently observed at the row level.
     static let listedToggleCompletionRequested = Notification.Name("listed.toggleCompletionRequested")
+
+    /// Posted when the user taps a due-date reminder notification. The `userInfo`
+    /// dictionary contains `taskRawLine` and `sourceFileID` for deep-linking.
+    static let listedNotificationTapped = Notification.Name("listed.notificationTapped")
 }

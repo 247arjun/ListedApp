@@ -3,118 +3,247 @@ import ListedCore
 
 /// Three-column-aware sidebar shared by macOS and iPad. iPhone presents this as a
 /// stand-alone screen.
+///
+/// Refreshed with tinted icon badges, section color washes, and richer visual hierarchy.
 public struct SidebarView: View {
     @Environment(AppModel.self) private var model
-    #if os(iOS)
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-    #endif
 
-    public init() {}
+    /// When `true`, taps push onto a `NavigationStack` via `NavigationLink(value:)`
+    /// (iPhone). When `false`, taps update the `List(selection:)` binding to drive
+    /// the next column of a `NavigationSplitView` (iPad / macOS).
+    ///
+    /// **Why explicit?** Inside a `NavigationSplitView`'s sidebar column,
+    /// `horizontalSizeClass` reports `.compact` (relative to the column width) even
+    /// on iPad's full-window regular layout — so detecting mode locally is unreliable.
+    /// The parent (`RootView`) knows the correct mode and passes it down.
+    private let usesPushNavigation: Bool
+
+    public init(usesPushNavigation: Bool = false) {
+        self.usesPushNavigation = usesPushNavigation
+    }
 
     public var body: some View {
-        @Bindable var bindable = model
-
-        // On iPhone the sidebar is the root of a `NavigationStack`; using
-        // `List(selection:)` there puts the list into selection mode and
-        // *swallows* `NavigationLink(value:)` taps, so rows look like nothing
-        // happens. We branch on horizontal size class so iPad / macOS keep
-        // the selection-driven sidebar (needed for `NavigationSplitView`).
-        #if os(iOS)
-        if horizontalSizeClass == .compact {
+        if usesPushNavigation {
             plainSidebarList
                 .navigationTitle("Listed")
         } else {
+            #if os(macOS)
             selectionSidebarList
                 .navigationTitle("Listed")
+                .frame(minWidth: 240)
+            #else
+            selectionSidebarList
+                .navigationTitle("Listed")
+            #endif
         }
-        #else
-        selectionSidebarList
-            .navigationTitle("Listed")
-            .frame(minWidth: 220)
-        #endif
     }
 
     // MARK: - List variants
 
-    /// Selection-driven sidebar used by macOS and regular-width iPad. Drives the
-    /// detail column of `NavigationSplitView`.
     private var selectionSidebarList: some View {
         List(selection: Binding(
             get: { Optional(model.selection) },
             set: { newValue in
-                if let newValue { model.selection = newValue }
+                if let newValue {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        model.selection = newValue
+                    }
+                }
             }
         )) {
             sidebarSections
         }
+        .listStyle(.sidebar)
     }
 
-    /// Push-driven sidebar used by iPhone (compact width). Each row is a real
-    /// `NavigationLink(value:)` so taps push onto the `NavigationStack`.
     private var plainSidebarList: some View {
         List {
             sidebarSections
         }
+        .listStyle(.sidebar)
     }
 
-    // MARK: - Sections (shared between both list variants)
+    // MARK: - Sections
 
     @ViewBuilder
     private var sidebarSections: some View {
-        Section("Smart Lists") {
+        Section {
             ForEach(TaskQuery.SmartList.allCases, id: \.self) { kind in
-                NavigationLink(value: SidebarSelection.smartList(kind)) {
-                    Label(label(for: kind), systemImage: icon(for: kind))
-                        .badge(model.taskCount(for: .smartList(kind)))
+                sidebarRow(selection: .smartList(kind)) {
+                    smartListRow(kind)
                 }
             }
+        } header: {
+            Text("Smart Lists")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .padding(.top, DesignTokens.spacingSM)
         }
 
         if !model.usedPriorities.isEmpty {
-            Section("Priorities") {
+            Section {
                 ForEach(model.usedPriorities, id: \.self) { priority in
-                    NavigationLink(value: SidebarSelection.priority(priority)) {
-                        Label("Priority " + String(priority), systemImage: "flag.fill")
-                            .foregroundStyle(DesignTokens.priorityColor(priority))
+                    sidebarRow(selection: .priority(priority)) {
+                        HStack(spacing: DesignTokens.spacingMD) {
+                            sidebarIconBadge(
+                                systemImage: "flag.fill",
+                                color: DesignTokens.priorityColor(priority)
+                            )
+                            Text("Priority \(String(priority))")
+                                .font(.body)
+                        }
                     }
                 }
+            } header: {
+                Text("Priorities")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.top, DesignTokens.spacingSM)
             }
         }
 
         if !model.allProjects.isEmpty {
-            Section("Projects") {
+            Section {
                 ForEach(model.allProjects, id: \.self) { project in
-                    NavigationLink(value: SidebarSelection.project(project)) {
-                        // Sidebar shows the bare name; the leading `+` lives in
-                        // the on-disk todo.txt token but reads as noise here.
-                        Label(project, systemImage: "number")
+                    sidebarRow(selection: .project(project)) {
+                        HStack(spacing: DesignTokens.spacingMD) {
+                            sidebarIconBadge(systemImage: "number", color: .blue)
+                            Text(project)
+                                .font(.body)
+                            Spacer()
+                            countBadge(model.taskCount(for: .project(project)))
+                        }
                     }
                 }
+            } header: {
+                Text("Projects")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.top, DesignTokens.spacingSM)
             }
         }
 
         if !model.allContexts.isEmpty {
-            Section("Contexts") {
+            Section {
                 ForEach(model.allContexts, id: \.self) { context in
-                    NavigationLink(value: SidebarSelection.context(context)) {
-                        // Same treatment as Projects above — drop the leading `@`.
-                        Label(context, systemImage: "at")
+                    sidebarRow(selection: .context(context)) {
+                        HStack(spacing: DesignTokens.spacingMD) {
+                            sidebarIconBadge(systemImage: "at", color: .purple)
+                            Text(context)
+                                .font(.body)
+                            Spacer()
+                            countBadge(model.taskCount(for: .context(context)))
+                        }
                     }
                 }
+            } header: {
+                Text("Contexts")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.top, DesignTokens.spacingSM)
             }
         }
 
-        if !model.activeTaskFiles.isEmpty {
-            Section("Files") {
+        if model.activeTaskFiles.count > 1 {
+            Section {
                 ForEach(model.activeTaskFiles) { file in
-                    NavigationLink(value: SidebarSelection.file(file.id)) {
-                        Label(file.displayName, systemImage: "doc.text")
-                            .badge(model.taskCount(for: .file(file.id)))
+                    sidebarRow(selection: .file(file.id)) {
+                        HStack(spacing: DesignTokens.spacingMD) {
+                            sidebarIconBadge(systemImage: "doc.text.fill", color: .gray)
+                            Text(file.displayName)
+                                .font(.body)
+                            Spacer()
+                            countBadge(model.taskCount(for: .file(file.id)))
+                        }
                     }
                 }
+            } header: {
+                Text("Files")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.top, DesignTokens.spacingSM)
             }
         }
     }
+
+    // MARK: - Smart list row with tinted icon badge
+
+    /// One sidebar row that adapts to push (NavigationStack) vs selection
+    /// (NavigationSplitView) navigation modes.
+    ///
+    /// - **Push** mode (iPhone): wraps the label in a `NavigationLink(value:)`
+    ///   so taps push onto the surrounding `NavigationStack`.
+    /// - **Selection** mode (iPad / macOS): tags the label with the
+    ///   `SidebarSelection` so the surrounding `List(selection:)` picks up taps
+    ///   and updates the binding directly. Wrapping in `NavigationLink` here
+    ///   would intercept the tap on iPad and prevent selection from updating
+    ///   (the visible "Today only" bug pre-fix).
+    @ViewBuilder
+    private func sidebarRow<Content: View>(
+        selection: SidebarSelection,
+        @ViewBuilder label: () -> Content
+    ) -> some View {
+        if usesPushNavigation {
+            NavigationLink(value: selection) {
+                label()
+            }
+        } else {
+            label()
+                .tag(selection)
+        }
+    }
+
+    private func smartListRow(_ kind: TaskQuery.SmartList) -> some View {
+        let color = DesignTokens.smartListColor(for: kind)
+        let count = model.taskCount(for: .smartList(kind))
+
+        return HStack(spacing: DesignTokens.spacingMD) {
+            sidebarIconBadge(
+                systemImage: DesignTokens.smartListIcon(for: kind),
+                color: color
+            )
+
+            Text(label(for: kind))
+                .font(.body.weight(.medium))
+
+            Spacer()
+
+            if count > 0 {
+                Text("\(count)")
+                    .font(.caption.weight(.medium).monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .contentTransition(.numericText())
+            }
+        }
+    }
+
+    // MARK: - Tinted icon badge (iOS Settings style)
+
+    /// A small rounded square with a tinted fill and white icon inside,
+    /// giving each sidebar item a distinct visual anchor.
+    private func sidebarIconBadge(systemImage: String, color: Color) -> some View {
+        Image(systemName: systemImage)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.white)
+            .frame(width: DesignTokens.sidebarIconSize, height: DesignTokens.sidebarIconSize)
+            .background(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(color.gradient)
+            )
+    }
+
+    /// Subtle inline count badge for non-smart-list items.
+    @ViewBuilder
+    private func countBadge(_ count: Int) -> some View {
+        if count > 0 {
+            Text("\(count)")
+                .font(.caption2.weight(.medium).monospacedDigit())
+                .foregroundStyle(.secondary)
+                .contentTransition(.numericText())
+        }
+    }
+
+    // MARK: - Labels
 
     private func label(for kind: TaskQuery.SmartList) -> String {
         switch kind {
@@ -123,16 +252,6 @@ public struct SidebarView: View {
         case .all: return "All"
         case .inbox: return "Inbox"
         case .completed: return "Completed"
-        }
-    }
-
-    private func icon(for kind: TaskQuery.SmartList) -> String {
-        switch kind {
-        case .today: return "sun.max"
-        case .upcoming: return "calendar"
-        case .all: return "tray.full"
-        case .inbox: return "tray"
-        case .completed: return "checkmark.circle"
         }
     }
 }

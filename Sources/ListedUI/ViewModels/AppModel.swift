@@ -1,6 +1,7 @@
 import Foundation
 import Observation
 import ListedCore
+import UserNotifications
 
 /// The single source-of-truth view model used by every Listed UI surface.
 ///
@@ -42,6 +43,7 @@ public final class AppModel {
     public let workspaceStore: WorkspaceStore
     public let bootstrap: StorageBootstrap
     public let cache: TaskCacheStore
+    public let reminderScheduler: ReminderScheduler
 
     // MARK: - Init
 
@@ -49,12 +51,14 @@ public final class AppModel {
                 repository: TaskRepository,
                 workspaceStore: WorkspaceStore = WorkspaceStore(),
                 bootstrap: StorageBootstrap = StorageBootstrap(),
-                cache: TaskCacheStore = TaskCacheStore()) {
+                cache: TaskCacheStore = TaskCacheStore(),
+                reminderScheduler: ReminderScheduler = ReminderScheduler()) {
         self.workspace = workspace
         self.repository = repository
         self.workspaceStore = workspaceStore
         self.bootstrap = bootstrap
         self.cache = cache
+        self.reminderScheduler = reminderScheduler
     }
 
     // MARK: - Synchronous launch path
@@ -165,17 +169,24 @@ public final class AppModel {
         if let first = errors.first {
             self.lastError = AppError(title: "Some files could not be loaded.", message: first.1.localizedDescription)
         }
+        // Sync notification schedule with current task state
+        await syncReminders()
     }
 
     public func startObservingChanges() {
         Task { [weak self] in
             guard let self else { return }
+            // Start NSFilePresenter-based watching for iCloud / external changes
+            await self.repository.startWatching()
             let stream = await self.repository.events()
             for await _ in stream {
                 let snapshot = await self.repository.loadedFiles()
                 await MainActor.run {
                     self.loadedFiles = snapshot
                 }
+                // Re-sync notifications whenever files change (completion,
+                // new task, external edit, etc.)
+                await self.syncReminders()
             }
         }
     }
@@ -381,6 +392,18 @@ public final class AppModel {
 
     public func dismissError() {
         lastError = nil
+    }
+
+    // MARK: - Reminders
+
+    /// Sync the notification schedule with the current task state and settings.
+    /// Called after every refresh, file change, and settings update.
+    public func syncReminders() async {
+        let allTasks = loadedFiles.flatMap(\.tasks)
+        await reminderScheduler.syncNotifications(
+            tasks: allTasks,
+            settings: workspace.settings
+        )
     }
 
     private func runMutation(_ work: @escaping () async throws -> Void) async {

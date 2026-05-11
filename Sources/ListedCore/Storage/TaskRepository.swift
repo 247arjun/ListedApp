@@ -36,6 +36,15 @@ public actor TaskRepository {
     private var files: [UUID: TodoTxtFile] = [:]
     private var continuations: [UUID: AsyncStream<RepositoryEvent>.Continuation] = [:]
 
+    /// Active file watchers keyed by task-file ID. Each watcher observes one
+    /// file (or directory) via `NSFilePresenter` and fires a reload on change.
+    private var watchers: [UUID: TaskFileWatcher] = [:]
+
+    /// Debounce tracker: last time we scheduled a reload for a given file.
+    /// Prevents re-reading 3× in rapid succession when iCloud writes in
+    /// multiple passes (metadata update → content → extended attributes).
+    private var pendingReloads: [UUID: Task<Void, Never>] = [:]
+
     // MARK: - Init
 
     public init(
@@ -462,6 +471,81 @@ public actor TaskRepository {
         guard let idx = workspace.taskFiles.firstIndex(where: { $0.id == id }) else { return }
         workspace.taskFiles[idx].lastKnownContentHash = hash
         workspace.taskFiles[idx].lastLoadedAt = Date()
+    }
+
+    // MARK: - File watching (NSFilePresenter)
+
+    /// Start watching all enabled task files for external changes (iCloud sync,
+    /// other editors). Each file gets its own `TaskFileWatcher` (NSFilePresenter).
+    /// When a change is detected, the file is debounce-reloaded and the event
+    /// stream fires so the UI updates automatically.
+    public func startWatching() {
+        for tf in enabledTaskFiles() {
+            startWatching(taskFile: tf)
+        }
+    }
+
+    /// Stop all active file watchers.
+    public func stopWatching() {
+        for (_, watcher) in watchers {
+            watcher.stop()
+        }
+        watchers.removeAll()
+        for (_, task) in pendingReloads {
+            task.cancel()
+        }
+        pendingReloads.removeAll()
+    }
+
+    /// Start watching a single task file. Resolves its URL and registers an
+    /// NSFilePresenter. For folder-based sources, watches the folder so new/removed
+    /// .txt files are also detected.
+    private func startWatching(taskFile: TaskFile) {
+        // Don't double-watch
+        guard watchers[taskFile.id] == nil else { return }
+        guard let source = source(withID: taskFile.sourceID) else { return }
+        guard let resolved = try? resolver.resolve(taskFile: taskFile, in: source) else { return }
+
+        let url: URL
+        if source.kind == .securityScopedFolder {
+            // Watch the folder, not the individual file
+            url = resolved.url.deletingLastPathComponent()
+        } else {
+            url = resolved.url
+        }
+        // Don't hold the security scope open for the lifetime of the watcher —
+        // NSFilePresenter doesn't need it to receive callbacks.
+        resolved.release()
+
+        let fileID = taskFile.id
+        let watcher = TaskFileWatcher(url: url) { [weak self] in
+            guard let self else { return }
+            Task {
+                await self.scheduleDebounceReload(for: fileID)
+            }
+        }
+        watchers[fileID] = watcher
+    }
+
+    /// Debounced reload: cancels any in-flight debounce for this file, waits 500ms,
+    /// then reloads. Called from NSFilePresenter callbacks (off-actor) via Task.
+    private func scheduleDebounceReload(for fileID: UUID) {
+        // Cancel any pending debounce for this file
+        pendingReloads[fileID]?.cancel()
+
+        let task = Task {
+            // Debounce: wait 500ms for writes to settle
+            try? await Task.sleep(for: .milliseconds(500))
+            guard !Task.isCancelled else { return }
+            do {
+                _ = try await self.load(taskFileID: fileID)
+            } catch {
+                // Silently ignore — file may be mid-write. The next change
+                // notification will try again.
+            }
+            self.pendingReloads[fileID] = nil
+        }
+        pendingReloads[fileID] = task
     }
 }
 

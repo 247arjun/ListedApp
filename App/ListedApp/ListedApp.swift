@@ -1,11 +1,13 @@
 import SwiftUI
 import ListedCore
 import ListedUI
+import UserNotifications
 #if canImport(AppKit)
 import AppKit
 #endif
 #if canImport(UIKit)
 import UIKit
+import BackgroundTasks
 #endif
 
 @main
@@ -110,6 +112,7 @@ private struct ContentScene: View {
     var body: some View {
         RootView()
             .environment(model)
+            .tint(DesignTokens.accent)
             .task {
                 // Start watching the repository for change events (used by the
                 // file presenter / external editor flow), and kick off the real
@@ -219,9 +222,21 @@ final class ListedAppDelegate: NSObject, NSApplicationDelegate {
 #if os(iOS)
 /// Captures Home Screen long-press quick-action launches on iOS. Cold launches
 /// arrive in `application(_:didFinishLaunchingWithOptions:)`; warm launches go
-/// through the scene delegate's `windowScene(_:performActionFor:)`. Both paths
-/// post `.listedNewTaskRequested` so the SwiftUI view tree handles the rest.
-final class ListedIOSAppDelegate: NSObject, UIApplicationDelegate {
+/// through `application(_:performActionFor:completionHandler:)`. SwiftUI's
+/// scene lifecycle does NOT invoke `application(_:configurationForConnecting:)`
+/// on a `@UIApplicationDelegateAdaptor`, so a custom `UISceneConfiguration` is
+/// never picked up — instead we handle warm launches via the legacy
+/// `UIApplicationDelegate` quick-action method, which still fires correctly
+/// for SwiftUI apps that don't ship their own scene delegate.
+///
+/// Also handles:
+///   - BGAppRefreshTask registration for background iCloud sync + notification scheduling
+///   - UNUserNotificationCenter delegate for notification-tap deep linking
+final class ListedIOSAppDelegate: NSObject, UIApplicationDelegate, @preconcurrency UNUserNotificationCenterDelegate {
+
+    /// Background refresh task identifier — must match Info.plist's
+    /// BGTaskSchedulerPermittedIdentifiers entry.
+    static let bgRefreshIdentifier = "app.listed.refresh"
 
     func application(
         _ application: UIApplication,
@@ -230,21 +245,32 @@ final class ListedIOSAppDelegate: NSObject, UIApplicationDelegate {
         if let item = launchOptions?[.shortcutItem] as? UIApplicationShortcutItem {
             handleShortcut(item)
         }
+
+        // Set ourselves as the notification delegate so taps route through us
+        UNUserNotificationCenter.current().delegate = self
+
+        // Register the background refresh task
+        BGTaskScheduler.shared.register(
+            forTaskWithIdentifier: Self.bgRefreshIdentifier,
+            using: nil
+        ) { task in
+            self.handleBackgroundRefresh(task as! BGAppRefreshTask)
+        }
+        scheduleNextBackgroundRefresh()
+
         return true
     }
 
-    /// Hand SwiftUI a custom `UISceneConfiguration` so the scene delegate below
-    /// receives `windowScene(_:performActionFor:)` callbacks. Without this,
-    /// scene-based apps don't get warm-launch shortcut delivery to the app
-    /// delegate at all.
+    /// Warm launch / re-activation entry point. iOS calls this whenever the
+    /// user taps a Home Screen quick action while the app is suspended in the
+    /// background. Returning `true` tells the system the action was handled.
     func application(
         _ application: UIApplication,
-        configurationForConnecting connectingSceneSession: UISceneSession,
-        options: UIScene.ConnectionOptions
-    ) -> UISceneConfiguration {
-        let config = UISceneConfiguration(name: nil, sessionRole: connectingSceneSession.role)
-        config.delegateClass = ListedSceneDelegate.self
-        return config
+        performActionFor shortcutItem: UIApplicationShortcutItem,
+        completionHandler: @escaping (Bool) -> Void
+    ) {
+        handleShortcut(shortcutItem)
+        completionHandler(true)
     }
 
     fileprivate func handleShortcut(_ item: UIApplicationShortcutItem) {
@@ -254,24 +280,72 @@ final class ListedIOSAppDelegate: NSObject, UIApplicationDelegate {
         PendingLaunchActions.requestNewTaskOnLaunch()
         NotificationCenter.default.post(name: .listedNewTaskRequested, object: nil)
     }
-}
 
-/// Scene delegate that catches both cold-via-scene and warm-launch shortcuts.
-final class ListedSceneDelegate: NSObject, UIWindowSceneDelegate {
+    // MARK: - Background App Refresh
 
-    func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
-        if let item = connectionOptions.shortcutItem {
-            (UIApplication.shared.delegate as? ListedIOSAppDelegate)?.handleShortcut(item)
+    /// Schedule the next background refresh. iOS decides the actual timing
+    /// based on user engagement, battery, and network. For daily users,
+    /// expect every 1-4 hours.
+    func scheduleNextBackgroundRefresh() {
+        let request = BGAppRefreshTaskRequest(identifier: Self.bgRefreshIdentifier)
+        request.earliestBeginDate = Date(timeIntervalSinceNow: 60 * 60) // ~1 hour
+        try? BGTaskScheduler.shared.submit(request)
+    }
+
+    /// Called by iOS when a background refresh slot is available. Reads files
+    /// from iCloud and re-syncs the notification schedule.
+    func handleBackgroundRefresh(_ task: BGAppRefreshTask) {
+        // Schedule the NEXT refresh before doing anything else
+        scheduleNextBackgroundRefresh()
+
+        let refreshWork = Task {
+            // Build a lightweight model just for the background refresh.
+            // This reads the workspace JSON + disk cache synchronously,
+            // then does a real iCloud refresh.
+            let model = await MainActor.run { AppModel.makeForLaunchSynchronously() }
+            await model.refresh()
+        }
+
+        task.expirationHandler = {
+            refreshWork.cancel()
+        }
+
+        Task {
+            _ = await refreshWork.value
+            task.setTaskCompleted(success: !refreshWork.isCancelled)
         }
     }
 
-    func windowScene(
-        _ windowScene: UIWindowScene,
-        performActionFor shortcutItem: UIApplicationShortcutItem,
-        completionHandler: @escaping (Bool) -> Void
+    // MARK: - Notification tap handling
+
+    /// Called when a notification is tapped while the app is in the background
+    /// or terminated. Extracts the task info and posts a deep-link notification.
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
     ) {
-        (UIApplication.shared.delegate as? ListedIOSAppDelegate)?.handleShortcut(shortcutItem)
-        completionHandler(true)
+        let userInfo = response.notification.request.content.userInfo
+        if let _ = userInfo["taskRawLine"] as? String {
+            // Post a notification that RootView / AppModel can react to
+            // for deep-linking to the specific task.
+            NotificationCenter.default.post(
+                name: .listedNotificationTapped,
+                object: nil,
+                userInfo: userInfo
+            )
+        }
+        completionHandler()
+    }
+
+    /// Called when a notification arrives while the app is in the foreground.
+    /// Show it as a banner rather than silently swallowing it.
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        completionHandler([.banner, .sound])
     }
 }
 #endif

@@ -1,15 +1,16 @@
 import SwiftUI
 import ListedCore
 
-/// Native circular completion control built from SF Symbols.
+/// Circular completion control with satisfying bounce animation and haptic feedback.
 ///
-/// Uses `circle` / `checkmark.circle.fill` rendered as a `Button` so we inherit
-/// the system's symbol rendering, accent tinting, and hover/press behavior on
-/// macOS 26 / iOS 26 instead of drawing our own ring.
+/// Uses `circle` / `checkmark.circle.fill` with a spring scale animation on toggle,
+/// plus `.sensoryFeedback` on iOS for a tactile reward on every completion.
 public struct CompletionToggle: View {
     var isCompleted: Bool
     var tint: Color?
     var onToggle: () -> Void
+
+    @State private var bouncing: Bool = false
 
     public init(isCompleted: Bool, tint: Color? = nil, onToggle: @escaping () -> Void) {
         self.isCompleted = isCompleted
@@ -18,14 +19,27 @@ public struct CompletionToggle: View {
     }
 
     public var body: some View {
-        Button(action: onToggle) {
-            Image(systemName: isCompleted ? "checkmark.square.fill" : "square")
+        Button {
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.5)) {
+                bouncing = true
+            }
+            onToggle()
+            // Reset bounce after animation settles
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                bouncing = false
+            }
+        } label: {
+            Image(systemName: isCompleted ? "checkmark.circle.fill" : "circle")
                 .symbolRenderingMode(.hierarchical)
                 .font(.title3)
                 .contentTransition(.symbolEffect(.replace))
-                .foregroundStyle(tint ?? .secondary)
+                .foregroundStyle(isCompleted ? (tint ?? DesignTokens.accent) : (tint ?? .secondary))
+                .scaleEffect(bouncing ? 1.25 : 1.0)
                 .accessibilityLabel(isCompleted ? "Mark as not done" : "Mark as done")
         }
         .buttonStyle(.plain)
+        #if os(iOS)
+        .sensoryFeedback(.success, trigger: isCompleted)
+        #endif
     }
 }

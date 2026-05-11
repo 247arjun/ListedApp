@@ -1,7 +1,8 @@
 import SwiftUI
 import ListedCore
 
-/// The right-hand detail pane.
+/// The right-hand detail pane — redesigned as a flowing document with a hero title,
+/// clean metadata grid, and refined card sections.
 public struct TaskDetailView: View {
     @Environment(AppModel.self) private var model
 
@@ -19,97 +20,145 @@ public struct TaskDetailView: View {
 
     public var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                headerCard
-                fieldsCard
-                metadataCard
-                rawCard
+            VStack(alignment: .leading, spacing: 0) {
+                // Ambient gradient header tinted by priority or section color
+                headerSection
+                    .padding(.horizontal, DesignTokens.spacingXL)
+                    .padding(.top, DesignTokens.spacingXL)
+                    .padding(.bottom, DesignTokens.spacingLG)
+
+                Divider()
+                    .padding(.horizontal, DesignTokens.spacingXL)
+
+                fieldsSection
+                    .padding(.horizontal, DesignTokens.spacingXL)
+                    .padding(.vertical, DesignTokens.spacingLG)
+
+                Divider()
+                    .padding(.horizontal, DesignTokens.spacingXL)
+
+                metadataSection
+                    .padding(.horizontal, DesignTokens.spacingXL)
+                    .padding(.vertical, DesignTokens.spacingLG)
+
+                Divider()
+                    .padding(.horizontal, DesignTokens.spacingXL)
+
+                rawSection
+                    .padding(.horizontal, DesignTokens.spacingXL)
+                    .padding(.vertical, DesignTokens.spacingLG)
             }
-            .padding(20)
         }
+        .background(detailBackground)
         .navigationTitle("Task")
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
         .onAppear { sync(from: task) }
-        // The runtime id is preserved across raw-line edits, so a pure id-based
-        // onChange wouldn't fire when the user saves the raw line. Watch the
-        // raw text too so structured fields re-sync after a raw rewrite.
         .onChange(of: task.id) { _, _ in sync(from: task) }
         .onChange(of: task.rawLine) { _, _ in sync(from: task) }
     }
 
-    // MARK: - Cards
+    // MARK: - Ambient background
 
-    private var headerCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            // Checkbox + title share one line. The TextField uses axis: .vertical
-            // so it grows downward to wrap long titles, but the leading checkbox
-            // stays anchored at the first text baseline of the field.
-            // Use `.top` alignment + tuned padding rather than `.firstTextBaseline`,
-            // because the baseline guide collapses when the TextField is empty
-            // (no text → no baseline → the checkbox snaps to the top of the row).
-            HStack(alignment: .top, spacing: 12) {
+    @ViewBuilder
+    private var detailBackground: some View {
+        let tint = (task.priority ?? task.preservedPriority).map(DesignTokens.priorityColor) ?? DesignTokens.accent
+        VStack {
+            LinearGradient(
+                colors: [tint.opacity(0.06), .clear],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .frame(height: 200)
+            Spacer()
+        }
+        .ignoresSafeArea()
+    }
+
+    // MARK: - Header: hero title + completion + chips
+
+    private var headerSection: some View {
+        VStack(alignment: .leading, spacing: DesignTokens.spacingMD) {
+            HStack(alignment: .top, spacing: DesignTokens.spacingMD) {
                 CompletionToggle(
                     isCompleted: task.isCompleted,
-                    tint: (task.priority ?? task.preservedPriority).map(DesignTokens.priorityColor) ?? .accentColor,
+                    tint: (task.priority ?? task.preservedPriority).map(DesignTokens.priorityColor) ?? DesignTokens.accent,
                     onToggle: { Task { await model.toggleCompletion(task) } }
                 )
-                .padding(.top, 3)
+                .padding(.top, 5)
 
                 TextField("Description", text: $description, axis: .vertical)
-                    .font(.title3.weight(.semibold))
+                    .font(.title2.weight(.semibold))
                     .textFieldStyle(.plain)
-                    .lineLimit(1...6)
+                    .lineLimit(1...8)
                     .submitLabel(.done)
                     .onSubmit { commitDescription() }
             }
 
-            // Due / priority chips drop to a second line so they don't crowd the
-            // title. Hidden when neither is set.
+            // Inline chips below title
             if task.dueDate != nil || task.priority != nil || task.preservedPriority != nil {
-                HStack(spacing: 6) {
+                HStack(spacing: DesignTokens.spacingSM) {
                     if let due = task.dueDate {
-                        Chip(DesignTokens.dueLabel(for: due), systemImage: "calendar", style: .accent(DesignTokens.dueColor(for: due)))
+                        let today = LocalDate.today()
+                        Chip(
+                            DesignTokens.dueLabel(for: due),
+                            systemImage: "calendar",
+                            style: due < today ? .filled(DesignTokens.dueColor(for: due)) : .accent(DesignTokens.dueColor(for: due))
+                        )
                     }
                     if let p = task.priority ?? task.preservedPriority {
                         Chip("Priority \(p)", systemImage: "flag.fill", style: .accent(DesignTokens.priorityColor(p)))
                     }
                     Spacer(minLength: 0)
                 }
-                .padding(.leading, 28) // align under the title text
+                .padding(.leading, 32) // align under the title text
             }
         }
-        .padding(16)
-        .background(card)
-        // Commit the description on focus loss too, not only on Return — the
-        // multi-line vertical field swallows Return as a newline.
-        .onChange(of: description) { _, _ in /* no-op; commit on submit */ }
+        .onChange(of: description) { _, _ in /* commit on submit */ }
     }
 
-    private var fieldsCard: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Fields").font(.headline)
+    // MARK: - Fields: clean metadata grid
 
+    private var fieldsSection: some View {
+        VStack(alignment: .leading, spacing: DesignTokens.spacingLG) {
+            Text("Fields")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            // Due date row
             HStack {
-                Text("Due date").frame(width: 110, alignment: .leading)
+                Label("Due date", systemImage: "calendar")
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 130, alignment: .leading)
                 Spacer()
                 if let due = dueDate {
                     DatePicker("", selection: Binding(get: { due }, set: { dueDate = $0; commitDueDate() }), displayedComponents: .date)
                         .labelsHidden()
-                    Button("Clear") { dueDate = nil; commitDueDate() }
-                        .buttonStyle(.borderless)
+                    Button { dueDate = nil; commitDueDate() } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.tertiary)
+                    }
+                    .buttonStyle(.plain)
                 } else {
                     Button("Add due date") {
                         dueDate = task.dueDate?.date(in: .current) ?? Date()
                         commitDueDate()
                     }
                     .buttonStyle(.borderless)
+                    .foregroundStyle(DesignTokens.accent)
                 }
             }
 
+            Divider()
+
+            // Priority row
             HStack {
-                Text("Priority").frame(width: 110, alignment: .leading)
+                Label("Priority", systemImage: "flag")
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 130, alignment: .leading)
                 Spacer()
                 Picker("", selection: Binding(
                     get: { priority.map(String.init) ?? "—" },
@@ -127,8 +176,14 @@ public struct TaskDetailView: View {
                 .pickerStyle(.menu)
             }
 
+            Divider()
+
+            // Source file row
             HStack {
-                Text("Source file").frame(width: 110, alignment: .leading)
+                Label("Source file", systemImage: "doc.text")
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 130, alignment: .leading)
                 Spacer()
                 Menu {
                     ForEach(model.activeTaskFiles) { file in
@@ -137,16 +192,21 @@ public struct TaskDetailView: View {
                         }
                     }
                 } label: {
-                    Text(model.displayName(forTaskFileID: task.sourceFileID))
+                    HStack(spacing: 4) {
+                        Text(model.displayName(forTaskFileID: task.sourceFileID))
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
                 }
             }
         }
-        .padding(16)
-        .background(card)
     }
 
-    private var metadataCard: some View {
-        VStack(alignment: .leading, spacing: 16) {
+    // MARK: - Metadata: projects + contexts
+
+    private var metadataSection: some View {
+        VStack(alignment: .leading, spacing: DesignTokens.spacingLG) {
             tagSubsection(
                 title: "Projects",
                 icon: "number",
@@ -183,11 +243,8 @@ public struct TaskDetailView: View {
                 }
             )
         }
-        .padding(16)
-        .background(card)
     }
 
-    /// Renders one tag-collection (projects OR contexts) with add/remove affordances.
     @ViewBuilder
     private func tagSubsection(
         title: String,
@@ -199,10 +256,11 @@ public struct TaskDetailView: View {
         add: @escaping (String) -> Void,
         remove: @escaping (String) -> Void
     ) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: DesignTokens.spacingSM) {
+            HStack(spacing: DesignTokens.spacingSM) {
                 Label(title, systemImage: icon)
-                    .font(.headline)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
                 Spacer()
                 AddTagButton(
                     title: "Add \(title.dropLast())",
@@ -216,7 +274,7 @@ public struct TaskDetailView: View {
             if values.isEmpty {
                 Text("Tap \(Image(systemName: "plus.circle")) to add.")
                     .font(.callout)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.tertiary)
             } else {
                 FlowLayoutCompat(spacing: 6) {
                     ForEach(values, id: \.self) { value in
@@ -229,28 +287,38 @@ public struct TaskDetailView: View {
         }
     }
 
-    private var rawCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
+    // MARK: - Raw editor with code-editor feel
+
+    private var rawSection: some View {
+        VStack(alignment: .leading, spacing: DesignTokens.spacingSM) {
             DisclosureGroup(isExpanded: $rawLineExpanded) {
                 TextEditor(text: $rawLine)
                     .font(.body.monospaced())
                     .frame(minHeight: 80)
-                    .padding(8)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(.thinMaterial))
+                    .padding(DesignTokens.spacingMD)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(Color(.secondarySystemFill))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .strokeBorder(.separator.opacity(0.3), lineWidth: 0.5)
+                    )
                 HStack {
                     Spacer()
                     Button("Save Raw Line") {
                         commitRawLine()
                     }
                     .buttonStyle(.borderedProminent)
+                    .tint(DesignTokens.accent)
+                    .controlSize(.small)
                 }
             } label: {
                 Label("Raw todo.txt line", systemImage: "chevron.left.forwardslash.chevron.right")
-                    .font(.headline)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
             }
         }
-        .padding(16)
-        .background(card)
     }
 
     // MARK: - Commit
@@ -267,8 +335,6 @@ public struct TaskDetailView: View {
         Task { await model.update(updated) }
     }
 
-    /// Append projects/contexts/key:value tokens that already existed back to the
-    /// trimmed description (the user only edited the headline text).
     private func descriptionWithExistingTokens() -> String {
         var text = description.trimmingCharacters(in: .whitespacesAndNewlines)
         let existingPieces = task.description
@@ -297,11 +363,5 @@ public struct TaskDetailView: View {
     private func commitRawLine() {
         let updated = TaskOperations.replaceRawLine(task, newRawLine: rawLine)
         Task { await model.update(updated) }
-    }
-
-    private var card: some View {
-        RoundedRectangle(cornerRadius: 16, style: .continuous)
-            .fill(.clear)
-            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 }

@@ -2,24 +2,37 @@ import SwiftUI
 import ListedCore
 
 /// The middle column of the macOS / iPad layout, and the primary screen on iPhone.
+///
+/// Redesigned with:
+///   - Hero typographic header with contextual greeting (Today view) and date subtitle
+///   - Card-based row styling with breathing room
+///   - Beautiful contextual empty states with gradient backgrounds and animated icons
+///   - Elevated inline composer as a first-class dock (macOS)
+///   - Smooth number transitions on all numeric displays
 public struct TaskListView: View {
     @Environment(AppModel.self) private var model
-    #if os(iOS)
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-    #endif
+
+    /// When `true`, task taps push a `TaskDetailView` onto a `NavigationStack`
+    /// (iPhone). When `false`, task taps update the `List(selection:)` binding
+    /// to drive the detail column of a `NavigationSplitView` (iPad / macOS).
+    ///
+    /// **Why explicit?** Inside a `NavigationSplitView`'s content column,
+    /// `horizontalSizeClass` is unreliable — `RootView` knows the correct mode
+    /// and passes it down.
+    private let usesPushNavigation: Bool
+
     @State private var newTaskText: String = ""
     @FocusState private var newTaskFieldFocused: Bool
 
-    public init() {}
+    public init(usesPushNavigation: Bool = false) {
+        self.usesPushNavigation = usesPushNavigation
+    }
 
     public var body: some View {
         @Bindable var bindable = model
 
         VStack(spacing: 0) {
             list
-            // Inline composer takes a permanent slice of the screen — fine on
-            // macOS where vertical space is plentiful, but wasteful on iPhone
-            // where the toolbar `+` already opens a sheet for adding.
             #if os(macOS)
             inlineComposer
             #endif
@@ -29,10 +42,6 @@ public struct TaskListView: View {
         .navigationSubtitle(subtitle)
         .searchable(text: $bindable.searchText, prompt: "Search tasks, +project, @context, due:today")
         #else
-        // On iPhone/iPad, dock the search field under the navigation title so the
-        // "Search" affordance lives at the top with the other navigation chrome
-        // (rather than at the bottom of the screen, which is reserved here for
-        // task creation).
         .searchable(
             text: $bindable.searchText,
             placement: .navigationBarDrawer(displayMode: .always),
@@ -40,16 +49,17 @@ public struct TaskListView: View {
         )
         #endif
         .toolbar { toolbarItems }
+        .animation(.easeInOut(duration: 0.25), value: model.visibleTasks.map(\.id))
     }
 
     private var navigationTitle: String {
         switch model.selection {
         case .smartList(let kind):
             switch kind {
-            case .today: return "Today"
-            case .upcoming: return "Upcoming"
-            case .all: return "All"
-            case .inbox: return "Inbox"
+            case .today:     return DesignTokens.timeOfDayGreeting
+            case .upcoming:  return "Upcoming"
+            case .all:       return "All Tasks"
+            case .inbox:     return "Inbox"
             case .completed: return "Completed"
             }
         case .file(let id):
@@ -61,8 +71,12 @@ public struct TaskListView: View {
     }
 
     private var subtitle: String {
-        let count = model.visibleTasks.count
-        return count == 1 ? "1 task" : "\(count) tasks"
+        let total = model.visibleTasks.count
+        let completed = model.visibleTasks.filter(\.isCompleted).count
+        if completed > 0 && total > completed {
+            return "\(completed) / \(total) done"
+        }
+        return total == 1 ? "1 task" : "\(total) tasks"
     }
 
     // MARK: - List
@@ -77,16 +91,16 @@ public struct TaskListView: View {
         }
     }
 
-    /// On iPhone (compact width) we **must not** pass a `selection:` binding to
-    /// `List`. Selection mode swallows `NavigationLink` taps — the chevron
-    /// highlights but the push never fires. Use a plain `List` there.
-    /// macOS / iPad-regular keep the selection-driven list because that's what
-    /// drives the third column of `NavigationSplitView`.
     @ViewBuilder
     private var listForCurrentPlatform: some View {
-        #if os(iOS)
-        if horizontalSizeClass == .compact {
+        if usesPushNavigation {
             List {
+                // Date subtitle header for Today view
+                if case .smartList(.today) = model.selection {
+                    dateHeader
+                        .listRowSeparator(.hidden)
+                        .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 8, trailing: 16))
+                }
                 ForEach(model.visibleTasks) { task in
                     rowEntry(for: task)
                 }
@@ -96,9 +110,18 @@ public struct TaskListView: View {
         } else {
             selectionList
         }
-        #else
-        selectionList
-        #endif
+    }
+
+    /// Date subtitle shown under the greeting-based navigation title on the Today view.
+    private var dateHeader: some View {
+        HStack(spacing: 6) {
+            Image(systemName: DesignTokens.timeOfDayIcon)
+                .foregroundStyle(DesignTokens.smartListColor(for: .today))
+                .imageScale(.small)
+            Text(Date(), format: .dateTime.weekday(.wide).month(.wide).day())
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(.secondary)
+        }
     }
 
     private var selectionList: some View {
@@ -106,36 +129,28 @@ public struct TaskListView: View {
             get: { model.selectedTaskID },
             set: { model.selectedTaskID = $0 }
         )) {
+            // Date subtitle header for Today view
+            if case .smartList(.today) = model.selection {
+                dateHeader
+                    .listRowSeparator(.hidden)
+                    .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 8, trailing: 16))
+            }
             ForEach(model.visibleTasks) { task in
                 rowEntry(for: task)
             }
             .onMove(perform: handleMove)
         }
-        #if os(macOS)
-        // `.inset` adds a small top gutter between the toolbar / title area and
-        // the first row that the row's tinted listRowBackground can't fill.
-        // `.plain` doesn't, so the priority tint reaches the very top of the
-        // scroll area while still respecting the window's horizontal padding.
         .listStyle(.plain)
-        #else
-        .listStyle(.plain)
-        #endif
     }
 
-    /// One list row. On iPhone (compact width) the row is wrapped in a
-    /// `NavigationLink(value:)` so taps push to `TaskDetailView` via the
-    /// `navigationDestination(for: TodoTaskID.self)` registered in
-    /// `RootView.iPhoneRoot`. On macOS / iPad-regular the row uses
-    /// `.tag(task.id)` so `List(selection:)` drives the third column of the
-    /// `NavigationSplitView` instead.
     @ViewBuilder
     private func rowEntry(for task: TodoTask) -> some View {
-        #if os(iOS)
-        if horizontalSizeClass == .compact {
+        if usesPushNavigation {
             NavigationLink(value: task.id) {
                 TaskRowView(task: task, showSourceBadge: showsSourceBadge)
             }
-            .listRowInsets(EdgeInsets())
+            .listRowInsets(EdgeInsets(top: 2, leading: 4, bottom: 2, trailing: 4))
+            .listRowSeparator(.hidden)
             .listRowBackground(rowBackground(for: task))
             .swipeActions(edge: .leading) {
                 completionSwipeButton(for: task)
@@ -149,20 +164,13 @@ public struct TaskListView: View {
         } else {
             selectionRow(for: task)
         }
-        #else
-        selectionRow(for: task)
-        #endif
     }
 
-    /// Selection-driven row variant (no `NavigationLink` wrapper) used on macOS
-    /// and regular-width iPad.
     private func selectionRow(for task: TodoTask) -> some View {
         TaskRowView(task: task, showSourceBadge: showsSourceBadge)
             .tag(task.id)
-            // Zero the system row insets so the priority tint reaches the row's
-            // top and bottom edges — TaskRowView already supplies its own internal
-            // vertical padding for breathing room.
-            .listRowInsets(EdgeInsets())
+            .listRowInsets(EdgeInsets(top: 2, leading: 4, bottom: 2, trailing: 4))
+            .listRowSeparator(.hidden)
             .listRowBackground(rowBackground(for: task))
             .swipeActions(edge: .leading) {
                 completionSwipeButton(for: task)
@@ -175,14 +183,13 @@ public struct TaskListView: View {
             }
     }
 
-    /// Optional priority tint for the row background. `nil` means inherit the
-    /// system row color. Completed tasks never get a tint.
     @ViewBuilder
     private func rowBackground(for task: TodoTask) -> some View {
         if model.workspace.settings.priorityRowHighlight,
            let p = task.priority,
            !task.isCompleted {
-            DesignTokens.priorityColor(p).opacity(0.10)
+            DesignTokens.priorityColor(p).opacity(0.06)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         } else {
             Color.clear
         }
@@ -210,23 +217,12 @@ public struct TaskListView: View {
         }
     }
 
-    /// Drag-and-drop reordering. Constrained to **same file + same priority +
-    /// same completion state**: dragging across priority buckets, between files,
-    /// or between active/completed sections is silently ignored, because the
-    /// visible list is sorted/filtered and a cross-bucket reorder wouldn't
-    /// survive the next sort/partition. The new order is persisted as the
-    /// actual line order in the underlying todo.txt file.
     private func handleMove(from source: IndexSet, to destination: Int) {
         guard let srcIdx = source.first, source.count == 1 else { return }
         let visible = model.visibleTasks
         let movingTask = visible[srcIdx]
-
-        // Reordering completed tasks is meaningless: they all live in the
-        // bottom section and the next mutation will re-partition them.
         guard !movingTask.isCompleted else { return }
 
-        // Translate SwiftUI's destination (post-move insertion offset) into the
-        // visible task we're landing adjacent to.
         let anchorIdx: Int
         if destination > srcIdx {
             anchorIdx = destination - 1
@@ -236,13 +232,10 @@ public struct TaskListView: View {
         guard anchorIdx >= 0, anchorIdx < visible.count, anchorIdx != srcIdx else { return }
         let anchor = visible[anchorIdx]
 
-        // Constraint: only allow within the same file + same priority bucket
-        // AND only between two active tasks. Cross-section drags are no-ops.
         guard movingTask.sourceFileID == anchor.sourceFileID,
               movingTask.priority == anchor.priority,
               !anchor.isCompleted else { return }
 
-        // Compute the new visible order, then extract the bucket order in that list.
         var newVisible = visible
         newVisible.move(fromOffsets: source, toOffset: destination)
         let bucketIDs = newVisible
@@ -287,21 +280,55 @@ public struct TaskListView: View {
         }
     }
 
-    // MARK: - Empty state
+    // MARK: - Empty state (beautiful, contextual)
 
     private var emptyState: some View {
-        ContentUnavailableView(
-            "No tasks",
-            systemImage: "checkmark.circle",
-            description: Text("Add a task below to get started.")
+        let icon = DesignTokens.emptyIcon(for: model.selection)
+        let title = DesignTokens.emptyTitle(for: model.selection)
+        let message = DesignTokens.emptySubtitle(for: model.selection)
+        let gradientColors = DesignTokens.emptyGradient(for: model.selection)
+        let tint = DesignTokens.sidebarTint(for: model.selection)
+
+        return VStack(spacing: DesignTokens.spacingXL) {
+            Spacer()
+
+            Image(systemName: icon)
+                .font(.system(size: 56))
+                .foregroundStyle(
+                    LinearGradient(
+                        colors: [tint, tint.opacity(0.5)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .symbolEffect(.pulse, options: .repeating.speed(0.5))
+
+            VStack(spacing: DesignTokens.spacingSM) {
+                Text(title)
+                    .font(.title2.weight(.semibold))
+
+                Text(message)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, DesignTokens.spacingSection)
+            }
+
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(
+            LinearGradient(
+                colors: gradientColors,
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .ignoresSafeArea()
         )
     }
 
-    // MARK: - Composer
+    // MARK: - Composer (elevated first-class dock)
 
-    /// File the inline composer should append to. Delegates to
-    /// `AppModel.composerTargetFileID` so the iOS toolbar `+`, the macOS Dock
-    /// menu, ⌘N and the inline composer all agree on the destination.
     private var composerTargetFileID: UUID? {
         model.composerTargetFileID
     }
@@ -309,30 +336,39 @@ public struct TaskListView: View {
     @ViewBuilder
     private var inlineComposer: some View {
         if let targetID = composerTargetFileID {
-            Divider()
-            VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    Image(systemName: "plus.circle.fill")
-                        .foregroundStyle(.tint)
-                    TextField("Add a task\u{2026} (e.g. Pay rent +Home @errands due:tomorrow)", text: $newTaskText)
-                        .textFieldStyle(.plain)
-                        .focused($newTaskFieldFocused)
-                        .onSubmit { submit(to: targetID) }
-                    if !newTaskText.isEmpty {
-                        Button("Add") { submit(to: targetID) }
-                            .buttonStyle(.borderedProminent)
-                            .controlSize(.small)
+            VStack(spacing: 0) {
+                Divider()
+                    .overlay(newTaskFieldFocused ? DesignTokens.accent.opacity(0.3) : Color.clear)
+
+                VStack(alignment: .leading, spacing: DesignTokens.spacingSM) {
+                    HStack(spacing: DesignTokens.spacingMD) {
+                        Image(systemName: "plus.circle.fill")
+                            .font(.title3)
+                            .foregroundStyle(DesignTokens.accent)
+                            .symbolRenderingMode(.hierarchical)
+
+                        TextField("Add a task\u{2026}", text: $newTaskText)
+                            .textFieldStyle(.plain)
+                            .font(.body)
+                            .focused($newTaskFieldFocused)
+                            .onSubmit { submit(to: targetID) }
+
+                        if !newTaskText.isEmpty {
+                            Button("Add") { submit(to: targetID) }
+                                .buttonStyle(.borderedProminent)
+                                .tint(DesignTokens.accent)
+                                .controlSize(.small)
+                        }
                     }
+                    composerTargetHint(for: targetID)
                 }
-                composerTargetHint(for: targetID)
+                .padding(.horizontal, DesignTokens.spacingLG)
+                .padding(.vertical, DesignTokens.spacingMD)
             }
-            .padding(12)
-            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .padding(12)
+            .background(.bar)
         }
     }
 
-    /// Tiny "Adding to <file>" caption so users always know where a new task will go.
     @ViewBuilder
     private func composerTargetHint(for targetID: UUID) -> some View {
         let displayName = model.displayName(forTaskFileID: targetID)
@@ -344,8 +380,8 @@ public struct TaskListView: View {
             if isDefault { Text("(default)") }
         }
         .font(.caption2)
-        .foregroundStyle(.secondary)
-        .padding(.leading, 24)
+        .foregroundStyle(.tertiary)
+        .padding(.leading, 30)
     }
 
     private func submit(to fileID: UUID) {
@@ -363,8 +399,6 @@ public struct TaskListView: View {
     @ToolbarContentBuilder
     private var toolbarItems: some ToolbarContent {
         ToolbarItemGroup(placement: .primaryAction) {
-            // Tiny non-blocking "syncing" indicator. Shown only while a background
-            // refresh is in flight; never gates the UI.
             if model.isRefreshing {
                 ProgressView()
                     .controlSize(.small)
@@ -394,16 +428,16 @@ public struct TaskListView: View {
                 Label("Display", systemImage: "slider.horizontal.3")
             }
 
+            // Primary action button with filled accent style
             Button {
-                // Single entry point on both platforms: post the notification
-                // and let RootView present the AddTaskSheet. Same path as
-                // the macOS Dock right-click → "New Task" item and the iOS
-                // Home Screen long-press quick action.
                 NotificationCenter.default.post(name: .listedNewTaskRequested, object: nil)
             } label: {
-                Label("New Task", systemImage: "plus")
+                Image(systemName: "plus.circle.fill")
+                    .symbolRenderingMode(.hierarchical)
+                    .font(.title3)
             }
             .keyboardShortcut("n", modifiers: .command)
+            .help("New Task")
         }
     }
 }
