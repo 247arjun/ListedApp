@@ -29,10 +29,33 @@ public final class AppModel {
     public var searchText: String = ""
 
     /// Sort/group/order for the active query.
-    public var sortConfiguration: SortConfiguration = .default
+    ///
+    /// Backed by `workspace.sortConfiguration` so the choice persists across
+    /// app kill/relaunch. Writes go through `workspaceStore` immediately so
+    /// the next launch reads the saved value.
+    public var sortConfiguration: SortConfiguration {
+        get { workspace.sortConfiguration }
+        set {
+            var updated = workspace
+            updated.sortConfiguration = newValue
+            try? workspaceStore.save(updated)
+            workspace = updated
+            Task { await repository.updateWorkspace(updated) }
+        }
+    }
 
     /// Whether the user wants completed tasks to appear in non-Completed lists.
-    public var showCompleted: Bool = false
+    /// Persisted via `AppSettings.showCompletedInLists`.
+    public var showCompleted: Bool {
+        get { workspace.settings.showCompletedInLists }
+        set {
+            var updated = workspace
+            updated.settings.showCompletedInLists = newValue
+            try? workspaceStore.save(updated)
+            workspace = updated
+            Task { await repository.updateWorkspace(updated) }
+        }
+    }
 
     /// Currently selected task (drives the detail pane).
     public var selectedTaskID: TodoTaskID?
@@ -208,6 +231,36 @@ public final class AppModel {
             files: loadedFiles,
             taskFiles: workspace.taskFiles
         )
+    }
+
+    /// Tasks grouped according to `sortConfiguration.grouping`. When grouping
+    /// is `.none` this returns a single `TaskGroup` with id `"all"` containing
+    /// every visible task — views can use this uniformly whether grouping is
+    /// active or not.
+    public var visibleTaskGroups: [TaskGroup] {
+        QueryEngine().runGrouped(
+            query: query,
+            files: loadedFiles,
+            taskFiles: workspace.taskFiles
+        )
+    }
+
+    /// Whether a group is currently collapsed (header shown, rows hidden).
+    public func isGroupCollapsed(_ groupID: String) -> Bool {
+        workspace.settings.collapsedGroupIDs.contains(groupID)
+    }
+
+    /// Toggle a group's collapsed state and persist to disk.
+    public func toggleGroupCollapsed(_ groupID: String) {
+        var updated = workspace
+        if updated.settings.collapsedGroupIDs.contains(groupID) {
+            updated.settings.collapsedGroupIDs.remove(groupID)
+        } else {
+            updated.settings.collapsedGroupIDs.insert(groupID)
+        }
+        try? workspaceStore.save(updated)
+        workspace = updated
+        Task { await repository.updateWorkspace(updated) }
     }
 
     public var defaultActiveFileID: UUID? {

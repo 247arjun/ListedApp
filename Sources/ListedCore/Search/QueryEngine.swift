@@ -74,6 +74,210 @@ public struct QueryEngine: Sendable {
         return sort(candidates, configuration: query.sort, today: today)
     }
 
+    // MARK: - Grouping
+
+    /// Run the same pipeline as `run(...)` but partition the result into
+    /// `TaskGroup`s based on `query.sort.grouping`. Returns a single group
+    /// (with `id == "all"`) when grouping is `.none`.
+    public func runGrouped(
+        query: TaskQuery,
+        files: [TodoTxtFile],
+        taskFiles: [TaskFile],
+        today: LocalDate = LocalDate.today()
+    ) -> [TaskGroup] {
+        let flat = run(query: query, files: files, taskFiles: taskFiles, today: today)
+        return groupTasks(flat, by: query.sort.grouping, taskFiles: taskFiles, today: today)
+    }
+
+    /// Partition `tasks` into groups according to `field`. Tasks already in
+    /// sorted order are preserved within each group (stable partition).
+    public func groupTasks(
+        _ tasks: [TodoTask],
+        by field: GroupingField,
+        taskFiles: [TaskFile] = [],
+        today: LocalDate = LocalDate.today()
+    ) -> [TaskGroup] {
+        switch field {
+        case .none:
+            return [TaskGroup(id: "all", title: "All", sortKey: nil, tasks: tasks)]
+
+        case .priority:
+            return groupByPriority(tasks)
+
+        case .project:
+            return groupByProject(tasks)
+
+        case .context:
+            return groupByContext(tasks)
+
+        case .dueDate:
+            return groupByDueDate(tasks, today: today)
+
+        case .completion:
+            return groupByCompletion(tasks)
+
+        case .file:
+            return groupByFile(tasks, taskFiles: taskFiles)
+        }
+    }
+
+    // MARK: - Grouping helpers
+
+    private func groupByPriority(_ tasks: [TodoTask]) -> [TaskGroup] {
+        // Preserve relative order within each bucket; A→H first, "None" last.
+        var buckets: [Character: [TodoTask]] = [:]
+        var noPriority: [TodoTask] = []
+        for task in tasks {
+            if let p = task.priority {
+                buckets[p, default: []].append(task)
+            } else {
+                noPriority.append(task)
+            }
+        }
+        var result: [TaskGroup] = []
+        let sortedKeys = buckets.keys.sorted()
+        for letter in sortedKeys {
+            result.append(TaskGroup(
+                id: "priority:\(letter)",
+                title: "Priority \(letter)",
+                sortKey: String(letter),
+                tasks: buckets[letter] ?? []
+            ))
+        }
+        if !noPriority.isEmpty {
+            result.append(TaskGroup(
+                id: "priority:none",
+                title: "No Priority",
+                sortKey: nil,
+                tasks: noPriority
+            ))
+        }
+        return result
+    }
+
+    private func groupByProject(_ tasks: [TodoTask]) -> [TaskGroup] {
+        // A task with multiple projects appears under each of them — matches
+        // how the sidebar's per-project view filters. Tasks with no project
+        // collect into a single "No Project" bucket.
+        var buckets: [String: [TodoTask]] = [:]
+        var unassigned: [TodoTask] = []
+        for task in tasks {
+            if task.projects.isEmpty {
+                unassigned.append(task)
+            } else {
+                for project in task.projects {
+                    buckets[project, default: []].append(task)
+                }
+            }
+        }
+        var result: [TaskGroup] = buckets
+            .map { project, tasks in
+                TaskGroup(
+                    id: "project:\(project)",
+                    title: project,
+                    sortKey: project.lowercased(),
+                    tasks: tasks
+                )
+            }
+            .sorted { ($0.sortKey ?? "") < ($1.sortKey ?? "") }
+        if !unassigned.isEmpty {
+            result.append(TaskGroup(
+                id: "project:none",
+                title: "No Project",
+                sortKey: nil,
+                tasks: unassigned
+            ))
+        }
+        return result
+    }
+
+    private func groupByContext(_ tasks: [TodoTask]) -> [TaskGroup] {
+        var buckets: [String: [TodoTask]] = [:]
+        var unassigned: [TodoTask] = []
+        for task in tasks {
+            if task.contexts.isEmpty {
+                unassigned.append(task)
+            } else {
+                for context in task.contexts {
+                    buckets[context, default: []].append(task)
+                }
+            }
+        }
+        var result: [TaskGroup] = buckets
+            .map { context, tasks in
+                TaskGroup(
+                    id: "context:\(context)",
+                    title: context,
+                    sortKey: context.lowercased(),
+                    tasks: tasks
+                )
+            }
+            .sorted { ($0.sortKey ?? "") < ($1.sortKey ?? "") }
+        if !unassigned.isEmpty {
+            result.append(TaskGroup(
+                id: "context:none",
+                title: "No Context",
+                sortKey: nil,
+                tasks: unassigned
+            ))
+        }
+        return result
+    }
+
+    private func groupByDueDate(_ tasks: [TodoTask], today: LocalDate) -> [TaskGroup] {
+        var buckets: [DueDateBucket: [TodoTask]] = [:]
+        for task in tasks {
+            // Completed tasks with no due date land in "Anytime" — but the
+            // common case is they're already filtered out by query.
+            let bucket = DueDateBucket.bucket(for: task.dueDate, today: today)
+            buckets[bucket, default: []].append(task)
+        }
+        // Emit all populated buckets in canonical display order.
+        return DueDateBucket.allCases
+            .sorted { $0.displayOrder < $1.displayOrder }
+            .compactMap { bucket -> TaskGroup? in
+                guard let tasks = buckets[bucket], !tasks.isEmpty else { return nil }
+                return TaskGroup(
+                    id: "due:\(bucket.rawValue)",
+                    title: bucket.title,
+                    sortKey: String(bucket.displayOrder),
+                    tasks: tasks
+                )
+            }
+    }
+
+    private func groupByCompletion(_ tasks: [TodoTask]) -> [TaskGroup] {
+        let active = tasks.filter { !$0.isCompleted }
+        let completed = tasks.filter { $0.isCompleted }
+        var result: [TaskGroup] = []
+        if !active.isEmpty {
+            result.append(TaskGroup(id: "completion:active", title: "Active", sortKey: "0", tasks: active))
+        }
+        if !completed.isEmpty {
+            result.append(TaskGroup(id: "completion:done", title: "Completed", sortKey: "1", tasks: completed))
+        }
+        return result
+    }
+
+    private func groupByFile(_ tasks: [TodoTask], taskFiles: [TaskFile]) -> [TaskGroup] {
+        let taskFileByID = Dictionary(uniqueKeysWithValues: taskFiles.map { ($0.id, $0) })
+        var buckets: [UUID: [TodoTask]] = [:]
+        for task in tasks {
+            buckets[task.sourceFileID, default: []].append(task)
+        }
+        return buckets
+            .map { fileID, tasks in
+                let name = taskFileByID[fileID]?.displayName ?? "Unknown"
+                return TaskGroup(
+                    id: "file:\(fileID.uuidString)",
+                    title: name,
+                    sortKey: name.lowercased(),
+                    tasks: tasks
+                )
+            }
+            .sorted { ($0.sortKey ?? "") < ($1.sortKey ?? "") }
+    }
+
     // MARK: - Smart lists
 
     private func applySmartList(_ kind: TaskQuery.SmartList, to tasks: [TodoTask], today: LocalDate) -> [TodoTask] {

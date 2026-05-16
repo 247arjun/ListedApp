@@ -9,6 +9,10 @@ struct AddTaskSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     let targetFileID: UUID?
+    /// Optional pre-filled draft values. Used when the user taps the "+"
+    /// button on a group header — e.g. tapping + on the "Home" project group
+    /// opens the sheet with `+Home` already attached.
+    let prefill: TaskPrefill?
 
     // MARK: - Draft state
 
@@ -22,6 +26,11 @@ struct AddTaskSheet: View {
     @State private var rawLineOverride: String?
 
     @FocusState private var titleFocused: Bool
+
+    init(targetFileID: UUID?, prefill: TaskPrefill? = nil) {
+        self.targetFileID = targetFileID
+        self.prefill = prefill
+    }
 
     var body: some View {
         NavigationStack {
@@ -71,6 +80,21 @@ struct AddTaskSheet: View {
             .onAppear {
                 if chosenFileID == nil {
                     chosenFileID = targetFileID ?? model.defaultActiveFileID
+                }
+                // Apply prefill from group-header "+" taps. Only fill fields
+                // the user didn't already set (defensive — `.onAppear` shouldn't
+                // re-fire but guards against future double-mount scenarios).
+                if let prefill {
+                    if let p = prefill.priority, priority == nil { priority = p }
+                    if let d = prefill.dueDate, dueDate == nil {
+                        dueDate = d.date(in: .current)
+                    }
+                    if let project = prefill.project, !projects.contains(project) {
+                        projects.append(project)
+                    }
+                    if let context = prefill.context, !contexts.contains(context) {
+                        contexts.append(context)
+                    }
                 }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                     titleFocused = true

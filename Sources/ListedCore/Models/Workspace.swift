@@ -72,6 +72,18 @@ public enum GroupingField: String, Codable, Sendable, Hashable, CaseIterable {
     case completion
 }
 
+/// How the task list visually renders when grouping is active.
+public enum GroupDisplayMode: String, Codable, Sendable, Hashable, CaseIterable {
+    /// A single vertical list — groups become inline section headers that
+    /// can be expanded or collapsed. The default and the only sensible mode
+    /// when grouping is `.none`.
+    case inline
+    /// Horizontal Kanban board — each group becomes a column. Best for
+    /// project / context / priority grouping where there are a small
+    /// number of named buckets.
+    case kanban
+}
+
 // MARK: - Saved filters
 
 public struct SavedFilter: Identifiable, Codable, Hashable, Sendable {
@@ -204,6 +216,17 @@ public struct AppSettings: Codable, Hashable, Sendable {
     /// 0 = day-of, 1 = day before, etc.
     public var reminderDaysBefore: Int
 
+    // MARK: - Grouping & display
+
+    /// How task groups are visually rendered when grouping is active.
+    /// Ignored when `SortConfiguration.grouping == .none`.
+    public var groupDisplayMode: GroupDisplayMode
+
+    /// Stable IDs of groups the user has collapsed. Group IDs follow the
+    /// format used by `TaskGroup.id` (e.g. "priority:A", "project:home",
+    /// "due:thisWeek"). Persisted across launches.
+    public var collapsedGroupIDs: Set<String>
+
     public init(
         addCreationDateToNewTasks: Bool = true,
         addUIDToNewTasks: Bool = true,
@@ -220,7 +243,9 @@ public struct AppSettings: Codable, Hashable, Sendable {
         remindersEnabled: Bool = false,
         reminderHour: Int = 9,
         reminderMinute: Int = 0,
-        reminderDaysBefore: Int = 0
+        reminderDaysBefore: Int = 0,
+        groupDisplayMode: GroupDisplayMode = .inline,
+        collapsedGroupIDs: Set<String> = []
     ) {
         self.addCreationDateToNewTasks = addCreationDateToNewTasks
         self.addUIDToNewTasks = addUIDToNewTasks
@@ -238,6 +263,8 @@ public struct AppSettings: Codable, Hashable, Sendable {
         self.reminderHour = reminderHour
         self.reminderMinute = reminderMinute
         self.reminderDaysBefore = reminderDaysBefore
+        self.groupDisplayMode = groupDisplayMode
+        self.collapsedGroupIDs = collapsedGroupIDs
     }
 
     public static let `default` = AppSettings()

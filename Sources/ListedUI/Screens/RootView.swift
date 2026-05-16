@@ -18,6 +18,11 @@ public struct RootView: View {
     /// user is on (sidebar, list, or detail).
     @State private var showAddSheet: Bool = false
 
+    /// Pre-filled values for the next presentation of `AddTaskSheet`. Set by
+    /// group-header "+" buttons (via `.listedNewTaskRequested` notification's
+    /// `object`); cleared on dismiss.
+    @State private var addSheetPrefill: TaskPrefill?
+
     public init() {}
 
     public var body: some View {
@@ -43,8 +48,8 @@ public struct RootView: View {
             SettingsView()
                 .environment(model)
         }
-        .sheet(isPresented: $showAddSheet) {
-            AddTaskSheet(targetFileID: model.composerTargetFileID)
+        .sheet(isPresented: $showAddSheet, onDismiss: { addSheetPrefill = nil }) {
+            AddTaskSheet(targetFileID: model.composerTargetFileID, prefill: addSheetPrefill)
                 .environment(model)
                 #if os(iOS)
                 .presentationDetents([.large])
@@ -53,9 +58,12 @@ public struct RootView: View {
                 .frame(minWidth: 520, minHeight: 600)
                 #endif
         }
-        .onReceive(NotificationCenter.default.publisher(for: .listedNewTaskRequested)) { _ in
+        .onReceive(NotificationCenter.default.publisher(for: .listedNewTaskRequested)) { notification in
             // Don't stack on top of onboarding or settings — defer until they close.
             guard !showOnboarding, !showSettings else { return }
+            // Group-header "+" buttons attach a `TaskPrefill` to the
+            // notification's `object`; the generic "+" toolbar button posts nil.
+            addSheetPrefill = notification.object as? TaskPrefill
             showAddSheet = true
         }
         .onReceive(NotificationCenter.default.publisher(for: .listedNotificationTapped)) { notification in
