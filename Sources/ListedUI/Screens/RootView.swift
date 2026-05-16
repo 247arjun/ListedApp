@@ -23,6 +23,13 @@ public struct RootView: View {
     /// `object`); cleared on dismiss.
     @State private var addSheetPrefill: TaskPrefill?
 
+    /// Whether the task-detail inspector pane is visible on iPad / macOS.
+    /// Inspector slides in from the trailing edge over the task list, so the
+    /// list (especially a Kanban board) gets the full window width when it's
+    /// hidden. Opens automatically when the user selects a task; can be
+    /// toggled manually from the toolbar.
+    @State private var showInspector: Bool = false
+
     public init() {}
 
     public var body: some View {
@@ -114,15 +121,21 @@ public struct RootView: View {
     // MARK: - Layouts
 
     private var splitRoot: some View {
+        // Two-column NavigationSplitView with the task list in the detail
+        // slot. TaskDetailView rides as an `.inspector` over the list so the
+        // user can collapse it on demand — critical for Kanban view to get
+        // full window width.
         NavigationSplitView(columnVisibility: $columnVisibility) {
             SidebarView(usesPushNavigation: false)
+                // Suppress NavigationSplitView's auto-provided sidebar toggle
+                // (which lives inside the sidebar's toolbar region and
+                // disappears when the sidebar is collapsed). We supply our
+                // own manual toggle in the detail toolbar below — keeping
+                // both creates a redundant double-button when sidebar is open.
+                .toolbar(removing: .sidebarToggle)
                 #if os(iOS)
-                // Attach the Settings button to the **sidebar's** toolbar so it
-                // shows up in iPad's leftmost column navigation bar. Placing the
-                // toolbar on `NavigationSplitView` itself (via `.automatic`) is
-                // unreliable on iPad — the button gets hidden when columns
-                // collapse. macOS uses the native `Settings` scene + ⌘, so it
-                // doesn't need this toolbar entry.
+                // Settings gear lives in the sidebar's toolbar on iPad.
+                // macOS uses the native `Settings { }` scene + ⌘, instead.
                 .toolbar {
                     ToolbarItem(placement: .primaryAction) {
                         Button { showSettings = true } label: {
@@ -132,32 +145,96 @@ public struct RootView: View {
                     }
                 }
                 #endif
-        } content: {
-            TaskListView(usesPushNavigation: false)
         } detail: {
-            if let task = model.selectedTask {
-                TaskDetailView(task: task)
-            } else {
-                // Beautiful empty detail pane
-                VStack(spacing: DesignTokens.spacingLG) {
-                    Image(systemName: "square.text.square")
-                        .font(.system(size: 48))
-                        .foregroundStyle(
-                            LinearGradient(
-                                colors: [DesignTokens.accent.opacity(0.6), DesignTokens.accent.opacity(0.3)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                    VStack(spacing: DesignTokens.spacingSM) {
-                        Text("No task selected")
-                            .font(.title3.weight(.medium))
-                        Text("Select a task to see its details.")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
+            TaskListView(usesPushNavigation: false)
+                .inspector(isPresented: $showInspector) {
+                    inspectorContent
+                        // Wide-enough minimum so the metadata grid's trailing
+                        // controls (+/x buttons, date picker, chevrons) aren't
+                        // clipped. iPad's default is too narrow.
+                        .inspectorColumnWidth(min: 360, ideal: 440, max: 640)
+                }
+                .toolbar {
+                    // Explicit sidebar toggle in the leading position.
+                    // NavigationSplitView's auto-provided toggle attaches to
+                    // the *sidebar's* toolbar region, which disappears when
+                    // the sidebar is collapsed — leaving the user stranded
+                    // with no way to bring it back. Adding our own in the
+                    // detail's toolbar guarantees the affordance is always
+                    // reachable.
+                    ToolbarItem(placement: sidebarTogglePlacement) {
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                columnVisibility = (columnVisibility == .detailOnly) ? .all : .detailOnly
+                            }
+                        } label: {
+                            Image(systemName: "sidebar.left")
+                        }
+                        .help("Toggle Sidebar")
+                        .keyboardShortcut("s", modifiers: [.command, .control])
+                    }
+
+                    // Inspector toggle — slides the task detail in/out.
+                    // Uses `sidebar.right` (filled when active) to match the
+                    // standard SwiftUI inspector affordance.
+                    ToolbarItem(placement: .primaryAction) {
+                        Button {
+                            showInspector.toggle()
+                        } label: {
+                            Image(systemName: showInspector ? "sidebar.right" : "sidebar.right")
+                                .symbolVariant(showInspector ? .fill : .none)
+                        }
+                        .help(showInspector ? "Hide Details" : "Show Details")
+                        .keyboardShortcut("0", modifiers: [.command, .option])
                     }
                 }
+                .onChange(of: model.selectedTaskID) { _, new in
+                    // Auto-open inspector when the user selects a task so a
+                    // single tap reveals details. Don't auto-close on deselect
+                    // — the user may want the inspector to persist as they
+                    // browse adjacent tasks.
+                    if new != nil { showInspector = true }
+                }
+        }
+    }
+
+    /// Cross-platform toolbar placement for the manual sidebar toggle.
+    /// macOS uses `.navigation` (leftmost of the unified title bar);
+    /// iOS/iPadOS uses `.topBarLeading` (leading edge of the nav bar).
+    private var sidebarTogglePlacement: ToolbarItemPlacement {
+        #if os(macOS)
+        return .navigation
+        #else
+        return .topBarLeading
+        #endif
+    }
+
+    /// Inspector body — either the selected task's detail view or an empty
+    /// placeholder. Shown in the trailing inspector pane on iPad / macOS.
+    @ViewBuilder
+    private var inspectorContent: some View {
+        if let task = model.selectedTask {
+            TaskDetailView(task: task)
+        } else {
+            VStack(spacing: DesignTokens.spacingLG) {
+                Image(systemName: "square.text.square")
+                    .font(.system(size: 48))
+                    .foregroundStyle(
+                        LinearGradient(
+                            colors: [DesignTokens.accent.opacity(0.6), DesignTokens.accent.opacity(0.3)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                VStack(spacing: DesignTokens.spacingSM) {
+                    Text("No task selected")
+                        .font(.title3.weight(.medium))
+                    Text("Select a task to see its details.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 

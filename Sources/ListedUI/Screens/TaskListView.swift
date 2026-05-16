@@ -42,9 +42,16 @@ public struct TaskListView: View {
         .navigationSubtitle(subtitle)
         .searchable(text: $bindable.searchText, prompt: "Search tasks, +project, @context, due:today")
         #else
+        // iPhone keeps the always-visible navbar drawer search field.
+        // iPad uses `.toolbar` placement so the search field lives in the
+        // navigation bar itself (a magnifying-glass affordance that expands
+        // on tap) instead of a full-width drawer underneath. The drawer mode
+        // visually extends behind an open inspector, which looks broken.
         .searchable(
             text: $bindable.searchText,
-            placement: .navigationBarDrawer(displayMode: .always),
+            placement: usesPushNavigation
+                ? .navigationBarDrawer(displayMode: .always)
+                : .toolbar,
             prompt: "Search tasks, +project, @context, due:today"
         )
         #endif

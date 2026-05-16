@@ -23,29 +23,29 @@ public struct TaskDetailView: View {
             VStack(alignment: .leading, spacing: 0) {
                 // Ambient gradient header tinted by priority or section color
                 headerSection
-                    .padding(.horizontal, DesignTokens.spacingXL)
+                    .padding(.horizontal, DesignTokens.spacingLG)
                     .padding(.top, DesignTokens.spacingXL)
                     .padding(.bottom, DesignTokens.spacingLG)
 
                 Divider()
-                    .padding(.horizontal, DesignTokens.spacingXL)
+                    .padding(.horizontal, DesignTokens.spacingLG)
 
                 fieldsSection
-                    .padding(.horizontal, DesignTokens.spacingXL)
+                    .padding(.horizontal, DesignTokens.spacingLG)
                     .padding(.vertical, DesignTokens.spacingLG)
 
                 Divider()
-                    .padding(.horizontal, DesignTokens.spacingXL)
+                    .padding(.horizontal, DesignTokens.spacingLG)
 
                 metadataSection
-                    .padding(.horizontal, DesignTokens.spacingXL)
+                    .padding(.horizontal, DesignTokens.spacingLG)
                     .padding(.vertical, DesignTokens.spacingLG)
 
                 Divider()
-                    .padding(.horizontal, DesignTokens.spacingXL)
+                    .padding(.horizontal, DesignTokens.spacingLG)
 
                 rawSection
-                    .padding(.horizontal, DesignTokens.spacingXL)
+                    .padding(.horizontal, DesignTokens.spacingLG)
                     .padding(.vertical, DesignTokens.spacingLG)
             }
         }
@@ -131,7 +131,7 @@ public struct TaskDetailView: View {
                 Label("Due date", systemImage: "calendar")
                     .font(.body)
                     .foregroundStyle(.secondary)
-                    .frame(width: 130, alignment: .leading)
+                    .frame(width: 110, alignment: .leading)
                 Spacer()
                 if let due = dueDate {
                     DatePicker("", selection: Binding(get: { due }, set: { dueDate = $0; commitDueDate() }), displayedComponents: .date)
@@ -158,7 +158,7 @@ public struct TaskDetailView: View {
                 Label("Priority", systemImage: "flag")
                     .font(.body)
                     .foregroundStyle(.secondary)
-                    .frame(width: 130, alignment: .leading)
+                    .frame(width: 110, alignment: .leading)
                 Spacer()
                 Picker("", selection: Binding(
                     get: { priority.map(String.init) ?? "—" },
@@ -183,7 +183,7 @@ public struct TaskDetailView: View {
                 Label("Source file", systemImage: "doc.text")
                     .font(.body)
                     .foregroundStyle(.secondary)
-                    .frame(width: 130, alignment: .leading)
+                    .frame(width: 110, alignment: .leading)
                 Spacer()
                 Menu {
                     ForEach(model.activeTaskFiles) { file in
