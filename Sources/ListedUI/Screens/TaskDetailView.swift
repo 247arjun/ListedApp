@@ -9,7 +9,9 @@ public struct TaskDetailView: View {
     let task: TodoTask
 
     @State private var description: String = ""
+    @State private var taskNote: String = ""
     @State private var dueDate: Date?
+    @State private var alertTime: Date?
     @State private var priority: Character?
     @State private var rawLineExpanded: Bool = false
     @State private var rawLine: String = ""
@@ -96,6 +98,15 @@ public struct TaskDetailView: View {
                     .onSubmit { commitDescription() }
             }
 
+            // Inline note / description
+            TextField("Add a description…", text: $taskNote, axis: .vertical)
+                .font(.body)
+                .foregroundStyle(.secondary)
+                .textFieldStyle(.plain)
+                .lineLimit(1...6)
+                .padding(.leading, 32) // align under the title text
+                .onSubmit { commitTaskNote() }
+
             // Inline chips below title
             if task.dueDate != nil || task.priority != nil || task.preservedPriority != nil {
                 HStack(spacing: DesignTokens.spacingSM) {
@@ -145,6 +156,33 @@ public struct TaskDetailView: View {
                     Button("Add due date") {
                         dueDate = task.dueDate?.date(in: .current) ?? Date()
                         commitDueDate()
+                    }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(DesignTokens.accent)
+                }
+            }
+
+            Divider()
+
+            // Reminder time row
+            HStack {
+                Label("Reminder time", systemImage: "bell")
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 130, alignment: .leading)
+                Spacer()
+                if let time = alertTime {
+                    DatePicker("", selection: Binding(get: { time }, set: { alertTime = $0; commitAlertTime() }), displayedComponents: .hourAndMinute)
+                        .labelsHidden()
+                    Button { alertTime = nil; commitAlertTime() } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.tertiary)
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    Button("Add reminder time") {
+                        alertTime = Self.dateFromMilitaryTime(task.alertTime) ?? Self.dateFromMilitaryTime(900)
+                        commitAlertTime()
                     }
                     .buttonStyle(.borderless)
                     .foregroundStyle(DesignTokens.accent)
@@ -325,7 +363,9 @@ public struct TaskDetailView: View {
 
     private func sync(from task: TodoTask) {
         description = task.cleanTitle
+        taskNote = task.taskNote ?? ""
         dueDate = task.dueDate?.date(in: .current)
+        alertTime = Self.dateFromMilitaryTime(task.alertTime)
         priority = task.priority ?? task.preservedPriority
         rawLine = task.rawLine
     }
@@ -360,8 +400,41 @@ public struct TaskDetailView: View {
         Task { await model.update(updated) }
     }
 
+    private func commitAlertTime() {
+        let military = alertTime.flatMap { Self.militaryTimeFromDate($0) }
+        let updated = TaskOperations.setAlertTime(task, to: military)
+        Task { await model.update(updated) }
+    }
+
+    private func commitTaskNote() {
+        let note = taskNote.trimmingCharacters(in: .whitespacesAndNewlines)
+        let updated = TaskOperations.setTaskNote(task, to: note.isEmpty ? nil : note)
+        Task { await model.update(updated) }
+    }
+
     private func commitRawLine() {
         let updated = TaskOperations.replaceRawLine(task, newRawLine: rawLine)
         Task { await model.update(updated) }
+    }
+
+    // MARK: - Military time helpers
+
+    /// Convert an optional military HHMM int (e.g. 1730) to a Date for use with DatePicker.
+    private static func dateFromMilitaryTime(_ military: Int?) -> Date? {
+        guard let military else { return nil }
+        let hour = military / 100
+        let minute = military % 100
+        var components = DateComponents()
+        components.hour = hour
+        components.minute = minute
+        return Calendar.current.date(from: components)
+    }
+
+    /// Convert a Date to military HHMM int (e.g. 1730).
+    private static func militaryTimeFromDate(_ date: Date) -> Int {
+        let calendar = Calendar.current
+        let hour = calendar.component(.hour, from: date)
+        let minute = calendar.component(.minute, from: date)
+        return hour * 100 + minute
     }
 }

@@ -112,8 +112,15 @@ public final class ReminderScheduler: @unchecked Sendable {
             components.year = calendar.component(.year, from: calendarDate)
             components.month = calendar.component(.month, from: calendarDate)
             components.day = calendar.component(.day, from: calendarDate)
-            components.hour = settings.reminderHour
-            components.minute = settings.reminderMinute
+
+            // Per-task alertTime (military HHMM) overrides global reminder time.
+            if let alert = task.alertTime {
+                components.hour = alert / 100
+                components.minute = alert % 100
+            } else {
+                components.hour = settings.reminderHour
+                components.minute = settings.reminderMinute
+            }
 
             // If firing today but the time has already passed, skip
             if fireDate == today {

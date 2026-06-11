@@ -59,7 +59,12 @@ public struct TodoTxtParser: Sendable {
         // 6. Project / context / metadata extraction over the remaining text only.
         extractTokens(from: remainingText, into: &task)
 
-        // 7. Promote well-known metadata into typed fields.
+        // 7. Inline note: extract text between {{ and }}.
+        if let note = TodoTask.extractInlineNote(from: remainingText) {
+            task.taskNote = note
+        }
+
+        // 8. Promote well-known metadata into typed fields.
         promoteMetadata(into: &task)
 
         return task
@@ -197,6 +202,13 @@ public struct TodoTxtParser: Sendable {
         }
         if let pri = task.metadata["pri"], let first = pri.first, pri.count == 1, first.isASCII, first.isUppercase {
             task.preservedPriority = first
+        }
+        if let alertStr = task.metadata["alertTime"] {
+            if let val = Int(alertStr), val >= 0, val <= 2359, val % 100 < 60 {
+                task.alertTime = val
+            } else {
+                task.parseWarnings.append(.init(kind: .malformedMetadata, message: "Invalid alertTime '\(alertStr)'", token: "alertTime:\(alertStr)"))
+            }
         }
     }
 }

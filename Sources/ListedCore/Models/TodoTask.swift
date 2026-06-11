@@ -64,6 +64,11 @@ public struct TodoTask: Identifiable, Hashable, Sendable {
     public var thresholdDate: LocalDate?
     public var recurrence: String?
     public var parentUID: String?
+    /// Per-task alert time as military HHMM (e.g. 1730 for 5:30 PM). Overrides the
+    /// global reminder time when present.
+    public var alertTime: Int?
+    /// Inline task note extracted from `{{…}}` delimiters.
+    public var taskNote: String?
     public var parseWarnings: [TodoParseWarning]
 
     public init(
@@ -85,6 +90,8 @@ public struct TodoTask: Identifiable, Hashable, Sendable {
         thresholdDate: LocalDate? = nil,
         recurrence: String? = nil,
         parentUID: String? = nil,
+        alertTime: Int? = nil,
+        taskNote: String? = nil,
         parseWarnings: [TodoParseWarning] = []
     ) {
         self.id = id
@@ -105,6 +112,8 @@ public struct TodoTask: Identifiable, Hashable, Sendable {
         self.thresholdDate = thresholdDate
         self.recurrence = recurrence
         self.parentUID = parentUID
+        self.alertTime = alertTime
+        self.taskNote = taskNote
         self.parseWarnings = parseWarnings
     }
 
@@ -118,8 +127,8 @@ public struct TodoTask: Identifiable, Hashable, Sendable {
     /// because some users want them in the headline; UIs that render projects /
     /// contexts as chips below should prefer `cleanTitle`.
     public var displayTitle: String {
-        var working = description
-        let stripKeys: Set<String> = ["due", "t", "rec", "uid", "parent", "pri", "order"]
+        var working = Self.stripInlineNote(from: description)
+        let stripKeys: Set<String> = ["due", "t", "rec", "uid", "parent", "pri", "order", "alertTime"]
         let parts = working.split(separator: " ", omittingEmptySubsequences: false)
         let kept = parts.filter { token in
             guard let colon = token.firstIndex(of: ":"), colon != token.startIndex else { return true }
@@ -134,7 +143,8 @@ public struct TodoTask: Identifiable, Hashable, Sendable {
     /// tokens, and `@context` tokens. This is what list rows show by default — the
     /// chips beneath the row carry the project / context information.
     public var cleanTitle: String {
-        let parts = description.split(separator: " ", omittingEmptySubsequences: true)
+        let stripped = Self.stripInlineNote(from: description)
+        let parts = stripped.split(separator: " ", omittingEmptySubsequences: true)
         let kept = parts.filter { token in
             // Drop +project tokens.
             if token.count > 1, token.first == "+" { return false }
@@ -157,5 +167,31 @@ public struct TodoTask: Identifiable, Hashable, Sendable {
             return true
         }
         return kept.joined(separator: " ").trimmingCharacters(in: .whitespaces)
+    }
+
+    // MARK: - Inline note helpers
+
+    /// Strips `{{…}}` inline note from a description string.
+    static func stripInlineNote(from text: String) -> String {
+        guard let open = text.range(of: "{{") else { return text }
+        guard let close = text.range(of: "}}", range: open.upperBound..<text.endIndex) else { return text }
+        var result = text
+        // Remove from just before {{ to just after }}, collapsing surrounding whitespace.
+        let removeStart = open.lowerBound
+        let removeEnd = close.upperBound
+        result.removeSubrange(removeStart..<removeEnd)
+        // Collapse any resulting double-spaces.
+        while result.contains("  ") {
+            result = result.replacingOccurrences(of: "  ", with: " ")
+        }
+        return result.trimmingCharacters(in: .whitespaces)
+    }
+
+    /// Extracts the text between `{{` and `}}` in a description, or nil.
+    static func extractInlineNote(from text: String) -> String? {
+        guard let open = text.range(of: "{{") else { return nil }
+        guard let close = text.range(of: "}}", range: open.upperBound..<text.endIndex) else { return nil }
+        let note = String(text[open.upperBound..<close.lowerBound]).trimmingCharacters(in: .whitespaces)
+        return note.isEmpty ? nil : note
     }
 }

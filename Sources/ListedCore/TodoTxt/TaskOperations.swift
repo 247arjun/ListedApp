@@ -144,7 +144,13 @@ public enum TaskOperations {
 
     public static func setDescription(_ task: TodoTask, to newDescription: String) -> TodoTask {
         var updated = task
-        updated.description = newDescription
+        // Preserve any existing inline note if the new description doesn't contain one.
+        var finalDescription = newDescription
+        if TodoTask.extractInlineNote(from: newDescription) == nil, let existingNote = task.taskNote {
+            finalDescription = finalDescription.trimmingCharacters(in: .whitespacesAndNewlines) + " {{\(existingNote)}}"
+        }
+        updated.description = finalDescription
+        updated.taskNote = TodoTask.extractInlineNote(from: finalDescription)
         // Re-extract projects/contexts/metadata from the new description.
         let parser = TodoTxtParser()
         // Cheap re-parse of just the description portion.
@@ -205,6 +211,39 @@ public enum TaskOperations {
         // Preserve the runtime ID so list selection survives the edit.
         reparsed.id = task.id
         return reparsed
+    }
+
+    // MARK: - Alert time
+
+    /// Set or clear the per-task alert time (military HHMM, e.g. 1730).
+    public static func setAlertTime(_ task: TodoTask, to alertTime: Int?) -> TodoTask {
+        var updated = task
+        updated.alertTime = alertTime
+        if let alertTime {
+            updated.metadata["alertTime"] = String(format: "%04d", alertTime)
+        } else {
+            updated.metadata["alertTime"] = nil
+        }
+        updated.rawLine = TodoTxtSerializer().serialize(updated, mode: .rebuild)
+        return updated
+    }
+
+    // MARK: - Inline note
+
+    /// Set or clear the inline `{{…}}` task note.
+    public static func setTaskNote(_ task: TodoTask, to note: String?) -> TodoTask {
+        var updated = task
+        // Strip any existing {{…}} from description first.
+        var desc = TodoTask.stripInlineNote(from: updated.description)
+        if let note, !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            desc += " {{\(note.trimmingCharacters(in: .whitespacesAndNewlines))}}"
+            updated.taskNote = note.trimmingCharacters(in: .whitespacesAndNewlines)
+        } else {
+            updated.taskNote = nil
+        }
+        updated.description = desc
+        updated.rawLine = TodoTxtSerializer().serialize(updated, mode: .rebuild)
+        return updated
     }
 
     // MARK: - String helpers

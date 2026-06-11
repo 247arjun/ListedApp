@@ -61,7 +61,7 @@ public struct TodoTxtSerializer: Sendable {
             .map(String.init)
 
         // Remove well-known metadata tokens we will re-emit ourselves.
-        let managedKeys: Set<String> = ["due", "t", "rec", "uid", "parent", "pri"]
+        let managedKeys: Set<String> = ["due", "t", "rec", "uid", "parent", "pri", "alertTime"]
         var bodyTokens: [String] = []
         for token in originalTokens {
             if let kv = parseKeyValue(token), managedKeys.contains(kv.key) {
@@ -78,6 +78,7 @@ public struct TodoTxtSerializer: Sendable {
         if let parent = task.parentUID { trailing.append("parent:\(parent)") }
         if let uid = task.uid { trailing.append("uid:\(uid)") }
         if task.isCompleted, let pri = task.preservedPriority { trailing.append("pri:\(pri)") }
+        if let alert = task.alertTime { trailing.append("alertTime:\(String(format: "%04d", alert))") }
 
         var pieces = prefix + bodyTokens + trailing
         // Drop any empty tokens that may have leaked in.

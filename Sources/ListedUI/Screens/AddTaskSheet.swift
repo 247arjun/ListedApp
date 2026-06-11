@@ -17,7 +17,9 @@ struct AddTaskSheet: View {
     // MARK: - Draft state
 
     @State private var description: String = ""
+    @State private var taskNote: String = ""
     @State private var dueDate: Date?
+    @State private var alertTime: Date?
     @State private var priority: Character?
     @State private var chosenFileID: UUID?
     @State private var projects: [String] = []
@@ -122,6 +124,14 @@ struct AddTaskSheet: View {
                     .submitLabel(.done)
             }
 
+            // Inline note / description
+            TextField("Add a description…", text: $taskNote, axis: .vertical)
+                .font(.body)
+                .foregroundStyle(.secondary)
+                .textFieldStyle(.plain)
+                .lineLimit(1...6)
+                .padding(.leading, 32)
+
             if dueDate != nil || priority != nil {
                 HStack(spacing: DesignTokens.spacingSM) {
                     if let d = dueDate {
@@ -164,6 +174,36 @@ struct AddTaskSheet: View {
                     Button("Add due date") { dueDate = Date() }
                         .buttonStyle(.borderless)
                         .foregroundStyle(DesignTokens.accent)
+                }
+            }
+
+            Divider()
+
+            // Reminder time row
+            HStack {
+                Label("Reminder time", systemImage: "bell")
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 130, alignment: .leading)
+                Spacer()
+                if let time = alertTime {
+                    DatePicker("", selection: Binding(get: { time }, set: { alertTime = $0 }), displayedComponents: .hourAndMinute)
+                        .labelsHidden()
+                    Button { alertTime = nil } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.tertiary)
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    Button("Add reminder time") {
+                        // Default to 9:00 AM
+                        var components = DateComponents()
+                        components.hour = 9
+                        components.minute = 0
+                        alertTime = Calendar.current.date(from: components)
+                    }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(DesignTokens.accent)
                 }
             }
 
@@ -357,9 +397,13 @@ struct AddTaskSheet: View {
         let fileID = chosenFileID ?? targetFileID ?? model.defaultActiveFileID
         guard let fileID else { return nil }
 
+        // Append inline note if present.
+        let noteText = taskNote.trimmingCharacters(in: .whitespacesAndNewlines)
+        let finalDescription = noteText.isEmpty ? trimmed : trimmed + " {{\(noteText)}}"
+
         let due = dueDate.map { LocalDate.from($0) }
-        return TaskOperations.make(
-            description: trimmed,
+        var task = TaskOperations.make(
+            description: finalDescription,
             priority: priority,
             dueDate: due,
             projects: projects,
@@ -369,6 +413,19 @@ struct AddTaskSheet: View {
             addUID: model.workspace.settings.addUIDToNewTasks,
             addCreationDate: model.workspace.settings.addCreationDateToNewTasks
         )
+
+        // Apply alertTime if set.
+        if let time = alertTime {
+            let calendar = Calendar.current
+            let h = calendar.component(.hour, from: time)
+            let m = calendar.component(.minute, from: time)
+            task = TaskOperations.setAlertTime(task, to: h * 100 + m)
+        }
+
+        // Set taskNote on the struct so it round-trips.
+        task.taskNote = noteText.isEmpty ? nil : noteText
+
+        return task
     }
 
     private func commit() {
