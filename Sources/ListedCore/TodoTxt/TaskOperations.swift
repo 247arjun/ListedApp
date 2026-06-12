@@ -147,7 +147,8 @@ public enum TaskOperations {
         // Preserve any existing inline note if the new description doesn't contain one.
         var finalDescription = newDescription
         if TodoTask.extractInlineNote(from: newDescription) == nil, let existingNote = task.taskNote {
-            finalDescription = finalDescription.trimmingCharacters(in: .whitespacesAndNewlines) + " {{\(existingNote)}}"
+            let escaped = TodoTask.escapeNoteForInline(existingNote)
+            finalDescription = finalDescription.trimmingCharacters(in: .whitespacesAndNewlines) + " {{\(escaped)}}"
         }
         updated.description = finalDescription
         updated.taskNote = TodoTask.extractInlineNote(from: finalDescription)
@@ -236,8 +237,10 @@ public enum TaskOperations {
         // Strip any existing {{…}} from description first.
         var desc = TodoTask.stripInlineNote(from: updated.description)
         if let note, !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            desc += " {{\(note.trimmingCharacters(in: .whitespacesAndNewlines))}}"
-            updated.taskNote = note.trimmingCharacters(in: .whitespacesAndNewlines)
+            let trimmed = note.trimmingCharacters(in: .whitespacesAndNewlines)
+            let escaped = TodoTask.escapeNoteForInline(trimmed)
+            desc += " {{\(escaped)}}"
+            updated.taskNote = trimmed
         } else {
             updated.taskNote = nil
         }

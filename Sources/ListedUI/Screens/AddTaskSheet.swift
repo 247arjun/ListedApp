@@ -397,9 +397,10 @@ struct AddTaskSheet: View {
         let fileID = chosenFileID ?? targetFileID ?? model.defaultActiveFileID
         guard let fileID else { return nil }
 
-        // Append inline note if present.
+        // Append inline note if present, escaping newlines for single-line storage.
         let noteText = taskNote.trimmingCharacters(in: .whitespacesAndNewlines)
-        let finalDescription = noteText.isEmpty ? trimmed : trimmed + " {{\(noteText)}}"
+        let escapedNote = TodoTask.escapeNoteForInline(noteText)
+        let finalDescription = noteText.isEmpty ? trimmed : trimmed + " {{\(escapedNote)}}"
 
         let due = dueDate.map { LocalDate.from($0) }
         var task = TaskOperations.make(

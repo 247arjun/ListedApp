@@ -188,10 +188,24 @@ public struct TodoTask: Identifiable, Hashable, Sendable {
     }
 
     /// Extracts the text between `{{` and `}}` in a description, or nil.
+    /// Unescapes `\n` → real newlines for multi-line notes.
     static func extractInlineNote(from text: String) -> String? {
         guard let open = text.range(of: "{{") else { return nil }
         guard let close = text.range(of: "}}", range: open.upperBound..<text.endIndex) else { return nil }
-        let note = String(text[open.upperBound..<close.lowerBound]).trimmingCharacters(in: .whitespaces)
-        return note.isEmpty ? nil : note
+        let raw = String(text[open.upperBound..<close.lowerBound]).trimmingCharacters(in: .whitespaces)
+        guard !raw.isEmpty else { return nil }
+        // Unescape: literal \\n → placeholder, literal \n → newline, placeholder → literal \n
+        let unescaped = raw
+            .replacingOccurrences(of: "\\\\n", with: "\u{0000}")
+            .replacingOccurrences(of: "\\n", with: "\n")
+            .replacingOccurrences(of: "\u{0000}", with: "\\n")
+        return unescaped.isEmpty ? nil : unescaped
+    }
+
+    /// Escapes newlines → `\n` for inline `{{…}}` storage on a single line.
+    public static func escapeNoteForInline(_ text: String) -> String {
+        text
+            .replacingOccurrences(of: "\\n", with: "\\\\n")
+            .replacingOccurrences(of: "\n", with: "\\n")
     }
 }
